@@ -7,7 +7,7 @@ use nom::{
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{char, digit1, multispace0, multispace1, line_ending},
     combinator::{opt, recognize},
-    multi::{many0, separated_list0},
+    multi::{many0, many1, separated_list0},
     sequence::delimited,
 };
 
@@ -100,7 +100,7 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
     let (s, start_pos) = position(s)?;
 
     // Parse zero or more stages (with optional whitespace between them)
-    let (s, stages) = many0(|s| {
+    let (s, stages) = many1(|s| {
         let (s, _) = multispace0(s)?;
         let (s, stage) = parse_stage(s)?;
         let (s, _) = multispace0(s)?;

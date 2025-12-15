@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-z3 = { version = "0.19.6", features = ["bundled"] }
+z3 = { version = "0.19.6", features = ["bundled"], default-features = false }
 nom = "8.0.0"
 nom_locate = "5.0.0"
+wasm-bindgen = "0.2.106"

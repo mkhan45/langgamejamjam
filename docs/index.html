@@ -1,0 +1,30 @@
+<html>
+    <head>
+        <title> editor </title>
+    </head>
+    <body>
+        <textarea id="input" style="width: 80vw; height: 80em">
+Begin Stage Basic:
+    Rule IsThree:
+        add(X, 2, 5)
+        ------------
+        isThree(X)
+End Stage Basic
+        </textarea>
+        <button id="run">Run</button>
+        <script type="module">
+            import init, { parse_module } from './langame.js';
+            await init();
+
+            window.parse_module = parse_module;
+
+            const btn = document.querySelector('#run');
+            const inp = document.querySelector('#input');
+
+            btn.onclick = () => {
+                console.log(inp.textContent);
+                console.log(parse_module(inp.textContent));
+            };
+        </script>
+    </body>
+</html>

@@ -710,6 +710,7 @@ version = "0.1.0"
 dependencies = [
  "nom 8.0.0",
  "nom_locate",
+ "wasm-bindgen",
  "z3",
 ]
 
