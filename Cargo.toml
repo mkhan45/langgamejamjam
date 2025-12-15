@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-z3 = "0.19.6"
+z3 = { version = "0.19.6", features = ["bundled"] }
 nom = "8.0.0"
 nom_locate = "5.0.0"

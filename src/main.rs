@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod solve;
 
 use std::env;
 use std::fs;
