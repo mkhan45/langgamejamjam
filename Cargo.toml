@@ -11,3 +11,9 @@ nom_locate = "5.0.0"
 [profile.release]
 opt-level = "z"
 strip = true
+
+[profile.release.package.z3]
+opt-level = 3
+
+[profile.release.package.z3-sys]
+opt-level = 3
