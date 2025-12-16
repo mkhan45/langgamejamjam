@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod ir;
 pub mod solver;
 
 use std::ffi::{CStr, CString};

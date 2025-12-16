@@ -7,6 +7,7 @@ edition = "2024"
 z3 = { version = "0.19.6", features = ["bundled"], default-features = false }
 nom = "8.0.0"
 nom_locate = "5.0.0"
+im = "15.1"
 
 [profile.release]
 opt-level = "z"
