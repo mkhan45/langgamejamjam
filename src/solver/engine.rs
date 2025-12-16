@@ -56,6 +56,9 @@ impl Subst {
             (Term::Atom(s1), Term::Atom(s2)) if s1 == s2 => Some(self.clone()),
             (Term::Int(i1), Term::Int(i2)) if i1 == i2 => Some(self.clone()),
             (Term::Float(f1), Term::Float(f2)) if f1 == f2 => Some(self.clone()),
+            (Term::App { sym: s1, args: a1 }, Term::App { sym: s2, args: a2 }) if s1 == s2 => {
+                self.unify_args(a1, a2, terms)
+            }
             _ => None,
         }
     }
@@ -296,7 +299,18 @@ impl<'p> Solver<'p> {
                     new_term_id
                 }
             }
-            _ => term_id,
+            Term::App { sym, args } => {
+                let new_args: Vec<TermId> = args
+                    .iter()
+                    .map(|&t| self.rename_term(t, var_map))
+                    .collect();
+                if new_args == args {
+                    term_id
+                } else {
+                    self.program.terms.alloc(Term::App { sym, args: new_args })
+                }
+            }
+            Term::Atom(_) | Term::Int(_) | Term::Float(_) => term_id,
         }
     }
 
@@ -491,6 +505,8 @@ impl<'p> Solver<'p> {
             queue,
             max_steps: 10000,
             steps: 0,
+            max_solutions: None,
+            solutions_found: 0,
         }
     }
 
@@ -503,6 +519,8 @@ impl<'p> Solver<'p> {
             queue,
             max_steps: 10000,
             steps: 0,
+            max_solutions: None,
+            solutions_found: 0,
         }
     }
 }
@@ -512,11 +530,18 @@ pub struct SolutionIter<'s, 'p> {
     queue: SearchQueue,
     max_steps: usize,
     steps: usize,
+    max_solutions: Option<usize>,
+    solutions_found: usize,
 }
 
 impl<'s, 'p> SolutionIter<'s, 'p> {
     pub fn with_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = max_steps;
+        self
+    }
+
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.max_solutions = Some(limit);
         self
     }
 }
@@ -525,6 +550,12 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
     type Item = State;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(max) = self.max_solutions {
+            if self.solutions_found >= max {
+                return None;
+            }
+        }
+
         while let Some(state) = self.queue.pop() {
             self.steps += 1;
             if self.steps > self.max_steps {
@@ -534,6 +565,7 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
             if let Some((goal, remaining)) = state.pop_goal() {
                 self.solver.step_prop(remaining, goal, &mut self.queue);
             } else {
+                self.solutions_found += 1;
                 return Some(state);
             }
         }
@@ -551,6 +583,14 @@ pub fn reify_term(term_id: TermId, subst: &Subst, program: &Program) -> String {
         Term::Atom(s) => program.symbols.get(*s).clone(),
         Term::Int(i) => i.to_string(),
         Term::Float(f) => f.to_string(),
+        Term::App { sym, args } => {
+            let name = program.symbols.get(*sym).clone();
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| reify_term(*a, subst, program))
+                .collect();
+            format!("{}({})", name, arg_strs.join(", "))
+        }
     }
 }
 

@@ -125,6 +125,7 @@ pub enum Term {
     Atom(SymbolId),
     Int(i32),
     Float(f32),
+    App { sym: SymbolId, args: Vec<TermId> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

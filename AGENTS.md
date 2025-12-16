@@ -298,3 +298,181 @@ This would parse into:
 - **Facts must be on separate lines** - each fact in the Facts section must be followed by a line ending to prevent keywords like "End" and "Facts" from being parsed as terms
 - The parser uses `nom` for parsing and `nom_locate` for span tracking
 - All AST nodes carry span information for error reporting and source mapping
+
+---
+
+# IR Design (src/ir.rs)
+
+The IR is a lower-level representation compiled from the AST, optimized for the solver.
+
+## Core Types
+
+### Term (IR)
+```rust
+pub enum Term {
+    Var(VarId),
+    Atom(SymbolId),
+    Int(i32),
+    Float(f32),
+    App { sym: SymbolId, args: Vec<TermId> },
+}
+```
+
+### Prop (Propositions)
+```rust
+pub enum Prop {
+    True,
+    False,
+    Eq(TermId, TermId),
+    And(PropId, PropId),
+    Or(PropId, PropId),
+    Not(PropId),
+    App { rel: RelId, args: Vec<TermId> },
+}
+```
+
+### RelKind
+```rust
+pub enum RelKind {
+    User,      // Back-chainable user-defined relations
+    SMTInt,    // Integer arithmetic constraints
+    SMTReal,   // Real arithmetic constraints
+}
+```
+
+## Arenas and Interning
+
+- `Arena<T>`: Stores items, returns `Id<T>` handles
+- `Interner<T>`: Deduplicates values (used for symbols)
+- `Program`: Contains all arenas (terms, props, vars, symbols, rels) plus facts, global_rules, and stages
+
+---
+
+# Solver Architecture (src/solver/engine.rs)
+
+miniKanren-style relational solver with constraint support.
+
+## Core Components
+
+### State
+```rust
+pub struct State {
+    pub subst: Subst,           // Variable substitution map
+    pub constraints: ConstraintStore,  // Pending arithmetic constraints
+    pub goals: Vector<PropId>,  // Goal queue (FIFO)
+}
+```
+
+### Subst (Substitution)
+- `walk(t, terms)`: Follows variable chains to resolve a term
+- `extend(v, t)`: Returns new Subst with v→t binding
+- `unify(t1, t2, terms)`: Structural unification, returns Option<Subst>
+- `unify_args(args1, args2, terms)`: Unifies argument lists pairwise
+
+### Unification
+- Variables unify with anything (extending substitution)
+- Atoms/Ints/Floats unify only if equal
+- `Term::App` unifies if same symbol and args unify pairwise
+
+### Solver
+```rust
+pub struct Solver<'a> {
+    pub program: &'a mut Program,
+}
+```
+
+- `query(goal: PropId)` → `SolutionIter`: Returns iterator over solutions
+- `SolutionIter.with_limit(n)`: Limit number of solutions
+- `SolutionIter.with_max_steps(n)`: Limit search steps
+
+### Goal Processing
+
+1. **Prop::True**: Pop goal, continue
+2. **Prop::And(p1, p2)**: Push both p1 and p2 as goals
+3. **Prop::Or(p1, p2)**: Branch search (two states)
+4. **Prop::Eq(t1, t2)**: Unify terms
+5. **Prop::App (User rel)**: Back-chain through facts and rules
+6. **Prop::App (SMT rel)**: Add to constraint store
+
+### Back-chaining
+
+For User relations:
+1. Try unifying with each fact
+2. Try each rule whose head matches
+3. `rename_term()` / `rename_prop()` create fresh variable copies when instantiating clauses
+
+### ArithConstraint
+```rust
+pub enum ArithConstraint {
+    IntEq, IntLt, IntLe, IntGt, IntGe, IntNeq,
+    IntAdd, IntSub, IntMul, IntDiv,
+    RealEq, RealLt, RealLe, RealGt, RealGe, RealNeq,
+    RealAdd, RealSub, RealMul, RealDiv,
+}
+```
+
+SMT constraints are collected but not solved yet (placeholder for Z3 integration).
+
+---
+
+# Compilation (src/ast/compile.rs)
+
+## Compiler
+- Takes `&mut Program` reference
+- `compile_module(module)`: Compiles full AST module to IR
+- `compile_query(term)`: Compiles a query term, returns `(PropId, Vec<(String, TermId)>)` with query variables
+
+## Lowering Rules
+
+- **AST App → IR Term::App**: For non-SMT function applications (user-defined functions)
+- **SMT relations**: Desugared with fresh variables (e.g., `int_add(X, 1)` in arg position becomes fresh var + constraint)
+- **`and(P, Q)`**: Becomes `Prop::And`
+- **`or(P, Q)`**: Becomes `Prop::Or`
+- **`eq(X, Y)`**: Becomes `Prop::Eq` for structural unification
+- **Facts**: Lowered via `lower_fact()`, must be ground App terms
+
+## SMT Relations (builtin)
+```
+int_eq, int_neq, int_lt, int_le, int_gt, int_ge
+int_add, int_sub, int_mul, int_div
+real_eq, real_neq, real_lt, real_le, real_gt, real_ge
+real_add, real_sub, real_mul, real_div
+```
+
+---
+
+# Frontend (src/main.rs)
+
+## Frontend struct
+```rust
+pub struct Frontend {
+    pub program: Program,
+}
+```
+
+- `load(source)`: Parses and compiles source string
+- `query(query_str)`: Runs query with default limit (10 solutions)
+- `query_with_limit(query_str, n)`: Custom solution limit
+
+## FFI Functions
+All public functionality exposed via C FFI for JS/WASM integration:
+- `create_frontend`, `free_frontend`
+- `frontend_load`, `frontend_query`
+- `frontend_fact_count`, `frontend_rule_count`, `frontend_stage_count`
+
+**Key constraint**: `main()` is empty - everything uses FFI for JS integration.
+
+---
+
+# Running Tests
+
+```bash
+cargo test
+```
+
+# Building
+
+```bash
+cargo build
+cargo build --release
+```

@@ -159,26 +159,13 @@ impl<'a> Compiler<'a> {
 
                     fresh_term_id
                 } else {
-                    let fresh_term_id = self.fresh_var();
-
                     let lowered_args: Vec<TermId> = args
                         .iter()
                         .map(|a| self.lower_term_arg(a, constraints))
                         .collect();
 
-                    let arity = lowered_args.len();
-                    let rel_id = self.get_or_create_rel(rel_name, arity, RelKind::User);
-
-                    let eq_prop = Prop::Eq(fresh_term_id, fresh_term_id);
-                    constraints.push(self.alloc_prop(eq_prop));
-
-                    let prop = Prop::App {
-                        rel: rel_id,
-                        args: lowered_args,
-                    };
-                    constraints.push(self.alloc_prop(prop));
-
-                    fresh_term_id
+                    let sym = self.intern_symbol(rel_name);
+                    self.alloc_term(IRTerm::App { sym, args: lowered_args })
                 }
             }
             _ => self.lower_simple_term(term),
@@ -217,6 +204,14 @@ impl<'a> Compiler<'a> {
                         let rhs_prop = self.lower_term_to_prop(&args[1]);
                         let or_prop = Prop::Or(lhs_prop, rhs_prop);
                         self.alloc_prop(or_prop)
+                    }
+                    "eq" if args.len() == 2 => {
+                        let mut constraints: Vec<PropId> = Vec::new();
+                        let t1 = self.lower_term_arg(&args[0], &mut constraints);
+                        let t2 = self.lower_term_arg(&args[1], &mut constraints);
+                        let eq_prop = Prop::Eq(t1, t2);
+                        let eq_prop_id = self.alloc_prop(eq_prop);
+                        self.conjoin_all(constraints, eq_prop_id)
                     }
                     _ => {
                         let mut constraints: Vec<PropId> = Vec::new();

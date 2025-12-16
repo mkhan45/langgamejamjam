@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod ir;
 pub mod solver;
+mod test_samelength;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -155,6 +156,10 @@ impl Frontend {
     }
 
     pub fn query(&mut self, query_str: &str) -> Result<Vec<String>, String> {
+        self.query_with_limit(query_str, 10)
+    }
+
+    pub fn query_with_limit(&mut self, query_str: &str, limit: usize) -> Result<Vec<String>, String> {
         let term_result = parser::parse_term(query_str.into()).finish();
         let term = match term_result {
             Ok((_, term)) => term,
@@ -164,7 +169,7 @@ impl Frontend {
         let (goal, query_vars) = Compiler::new(&mut self.program).compile_query(&term);
 
         let mut solver = Solver::new(&mut self.program);
-        let solutions: Vec<_> = solver.query(goal).collect();
+        let solutions: Vec<_> = solver.query(goal).with_limit(limit).collect();
 
         Ok(solutions
             .iter()

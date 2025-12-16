@@ -14,6 +14,7 @@ fi
 RUSTFLAGS="-Clink-args=-sEXPORTED_RUNTIME_METHODS=['cwrap','ccall','UTF8ToString','allocateUTF8']"
 RUSTFLAGS="$RUSTFLAGS -Clink-args=-sMODULARIZE=1"
 RUSTFLAGS="$RUSTFLAGS -Clink-args=-sEXPORT_ES6=1"
+RUSTFLAGS="$RUSTFLAGS -Clink-args=-sALLOW_MEMORY_GROWTH=1"
 export RUSTFLAGS
 
 cargo build --target=wasm32-unknown-emscripten $CARGO_ARGS
