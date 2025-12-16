@@ -8,13 +8,11 @@ use std::os::raw::c_char;
 
 use nom::Finish;
 use ast::parser;
-use ast::compile::{compile, Compiler};
-
-use z3::SatResult;
+use ast::compile::Compiler;
 
 use ast::Module;
 use ir::Program;
-use solver::{format_solution, GameState, QueryResult, Solver};
+use solver::{format_solution, Solver};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn parse_module(input: *const c_char) -> *mut Module {
@@ -42,57 +40,6 @@ pub unsafe extern "C" fn free_module(module: *mut Module) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn create_game_state() -> *mut GameState {
-    Box::leak(Box::new(GameState::new()))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn free_game_state(state: *mut GameState) {
-    unsafe { std::ptr::drop_in_place(state) }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_reset(state: *mut GameState) {
-    unsafe { (*state).reset() }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_load_facts(state: *mut GameState, module: *mut Module) {
-    unsafe {
-        for fact in &(*module).facts {
-            (*state).assert_fact(fact);
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_load_global(state: *mut GameState, module: *mut Module) {
-    unsafe {
-        (*state).load_stage(&(*module).global_stage);
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_load_stage(state: *mut GameState, module: *mut Module, index: i32) {
-    unsafe {
-        if let Some(stage) = (&(*module).stages).get(index as usize) {
-            (*state).load_stage(stage);
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_check(state: *mut GameState) -> i32 {
-    unsafe {
-        match (*state).check() {
-            SatResult::Sat => 0,
-            SatResult::Unsat => 1,
-            SatResult::Unknown => 2,
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn module_stage_count(module: *mut Module) -> i32 {
     unsafe { (*module).stages.len() as i32 }
 }
@@ -108,39 +55,16 @@ pub unsafe extern "C" fn module_get_stage_name(module: *mut Module, index: i32) 
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn game_state_query(state: *mut GameState, query: *const c_char) -> *mut c_char {
-    unsafe {
-        let query_str = CStr::from_ptr(query).to_str().unwrap_or("");
-        let term_result = parser::parse_term(query_str.into()).finish();
-
-        let term = match term_result {
-            Ok((_, term)) => term,
-            Err(_) => {
-                return CString::new("Parse error").unwrap().into_raw();
-            }
-        };
-
-        let result = (*state).query(&term);
-        let output = match result {
-            QueryResult::Sat { model: Some(m) } => format!("Sat\n{}", m),
-            QueryResult::Sat { model: None } => "Sat (no model)".to_string(),
-            QueryResult::Unsat => "Unsat".to_string(),
-            QueryResult::Unknown => "Unknown".to_string(),
-        };
-
-        CString::new(output).unwrap().into_raw()
-    }
-}
-
 pub struct Frontend {
     pub program: Program,
+    pub var_map: std::collections::HashMap<String, ir::TermId>,
 }
 
 impl Frontend {
     pub fn new() -> Self {
         Self {
             program: Program::default(),
+            var_map: std::collections::HashMap::new(),
         }
     }
 
@@ -148,7 +72,10 @@ impl Frontend {
         let result = parser::parse_module(source.into()).finish();
         match result {
             Ok((_, module)) => {
-                self.program = compile(&module);
+                self.program = Program::default();
+                let mut compiler = Compiler::new(&mut self.program);
+                compiler.compile_module(&module);
+                self.var_map = compiler.into_var_map();
                 Ok(())
             }
             Err(e) => Err(format!("Parse error: {:?}", e)),
@@ -166,7 +93,8 @@ impl Frontend {
             Err(e) => return Err(format!("Query parse error: {:?}", e)),
         };
 
-        let (goal, query_vars) = Compiler::new(&mut self.program).compile_query(&term);
+        let (goal, query_vars) = Compiler::with_var_map(&mut self.program, self.var_map.clone())
+            .compile_query(&term);
 
         let mut solver = Solver::new(&mut self.program);
         let solutions: Vec<_> = solver.query(goal).with_limit(limit).collect();
@@ -268,8 +196,9 @@ End Global
 "#).unwrap();
 
         eprintln!("Facts: {}", frontend.program.facts.len());
-        for fact in &frontend.program.facts {
-            eprintln!("  fact rel: {:?}, args: {:?}", fact.rel, fact.args);
+        for &fact_prop_id in &frontend.program.facts {
+            let fact_prop = frontend.program.props.get(fact_prop_id);
+            eprintln!("  fact: {:?}", fact_prop);
         }
         eprintln!("Rels:");
         for (id, rel) in frontend.program.rels.iter() {
@@ -279,5 +208,50 @@ End Global
         let result = frontend.query("position(player, X, Y)").unwrap();
         eprintln!("Query result: {:?}", result);
         assert!(!result.is_empty(), "Expected at least one solution");
+    }
+
+    #[test]
+    fn test_eq_fact_constrains_query() {
+        let mut frontend = Frontend::new();
+        frontend.load(r#"Begin Facts:
+    eq(X, 1)
+End Facts
+
+Begin Global:
+End Global
+"#).unwrap();
+
+        let result = frontend.query("eq(X, 2)").unwrap();
+        assert!(result.is_empty(), "eq(X, 2) should fail when eq(X, 1) is a fact, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_eq_fact_allows_compatible_query() {
+        let mut frontend = Frontend::new();
+        frontend.load(r#"Begin Facts:
+    eq(X, 1)
+End Facts
+
+Begin Global:
+End Global
+"#).unwrap();
+
+        let result = frontend.query("eq(X, Y)").unwrap();
+        assert!(!result.is_empty(), "eq(X, Y) should succeed with Y=1 when eq(X, 1) is a fact");
+    }
+
+    #[test]
+    fn test_eq_with_cons_term() {
+        let mut frontend = Frontend::new();
+        frontend.load(r#"Begin Facts:
+    eq(X, cons(A, B))
+End Facts
+
+Begin Global:
+End Global
+"#).unwrap();
+
+        let result = frontend.query("eq(X, Y)").unwrap();
+        assert!(!result.is_empty(), "eq(X, cons(A, B)) should work with relational solver");
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Module, Rel, Rule, Stage, Term, TermContents};
 use crate::ir::{
-    Clause, Fact, Program, Prop, PropId, RelId, RelInfo, RelKind, SymbolId, Term as IRTerm,
+    Clause, Program, Prop, PropId, RelId, RelInfo, RelKind, SymbolId, Term as IRTerm,
     TermId, Var,
 };
 
@@ -54,6 +54,26 @@ impl<'a> Compiler<'a> {
         };
         compiler.register_builtin_relations();
         compiler
+    }
+
+    pub fn with_var_map(program: &'a mut Program, var_map: HashMap<String, TermId>) -> Self {
+        let mut rel_map = HashMap::new();
+        for (id, rel_info) in program.rels.iter() {
+            rel_map.insert(rel_info.name.clone(), id);
+        }
+
+        let mut compiler = Self {
+            program,
+            rel_map,
+            var_map,
+            fresh_var_counter: 0,
+        };
+        compiler.register_builtin_relations();
+        compiler
+    }
+
+    pub fn into_var_map(self) -> HashMap<String, TermId> {
+        self.var_map
     }
 
     fn register_builtin_relations(&mut self) {
@@ -252,35 +272,8 @@ impl<'a> Compiler<'a> {
         })
     }
 
-    fn lower_fact(&mut self, term: &Term) -> Option<Fact> {
-        match &term.contents {
-            TermContents::App { rel, args } => {
-                let rel_name = match rel {
-                    Rel::SMTRel { name } | Rel::UserRel { name } => name.as_str(),
-                };
-
-                self.clear_scope();
-
-                let mut constraints: Vec<PropId> = Vec::new();
-                let lowered_args: Vec<TermId> = args
-                    .iter()
-                    .map(|a| self.lower_term_arg(a, &mut constraints))
-                    .collect();
-
-                if !constraints.is_empty() {
-                    return None;
-                }
-
-                let arity = lowered_args.len();
-                let rel_id = self.get_or_create_rel(rel_name, arity, RelKind::User);
-
-                Some(Fact {
-                    rel: rel_id,
-                    args: lowered_args,
-                })
-            }
-            _ => None,
-        }
+    fn lower_fact(&mut self, term: &Term) -> PropId {
+        self.lower_term_to_prop(term)
     }
 
     fn lower_rule(&mut self, rule: &Rule) -> Clause {
@@ -330,7 +323,6 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile_query(&mut self, term: &Term) -> (PropId, Vec<(String, TermId)>) {
-        self.clear_scope();
         let prop_id = self.lower_term_to_prop(term);
         let query_vars: Vec<(String, TermId)> = self.var_map.iter()
             .map(|(k, v)| (k.clone(), *v))
@@ -340,9 +332,8 @@ impl<'a> Compiler<'a> {
 
     pub fn compile_module(&mut self, module: &Module) {
         for fact_term in &module.facts {
-            if let Some(fact) = self.lower_fact(fact_term) {
-                self.program.facts.push(fact);
-            }
+            let fact_prop = self.lower_fact(fact_term);
+            self.program.facts.push(fact_prop);
         }
 
         for rule in &module.global_stage.rules {
@@ -386,9 +377,14 @@ End Global
 "#;
         let program = parse_and_compile(input);
         assert_eq!(program.facts.len(), 1);
-        let fact = &program.facts[0];
-        assert_eq!(program.rels.get(fact.rel).name, "position");
-        assert_eq!(fact.args.len(), 3);
+        let fact_prop = program.props.get(program.facts[0]);
+        match fact_prop {
+            Prop::App { rel, args } => {
+                assert_eq!(program.rels.get(*rel).name, "position");
+                assert_eq!(args.len(), 3);
+            }
+            _ => panic!("Expected Prop::App"),
+        }
     }
 
     #[test]

@@ -154,12 +154,6 @@ pub struct RelInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct Fact {
-    pub rel: RelId,
-    pub args: Vec<TermId>,
-}
-
-#[derive(Debug, Clone)]
 pub struct Clause {
     pub name: String,
     pub head_rel: RelId,
@@ -180,7 +174,7 @@ pub struct Program {
     pub vars: Arena<Var>,
     pub symbols: Interner<String>,
     pub rels: Arena<RelInfo>,
-    pub facts: Vec<Fact>,
+    pub facts: Vec<PropId>,
     pub global_rules: Vec<Clause>,
     pub stages: Vec<Stage>,
 }

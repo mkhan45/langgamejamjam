@@ -1,13 +1,11 @@
 Begin Facts:
-    true
-
-    edge(1, 2)
-    edge(2, 3)
+    true()
+    eq(L, cons(1, cons(2, cons(3, cons(4, nil)))))
 End Facts
 
 Begin Global:
     Rule SameLenBase:
-    true
+    true()
     -----------------
     sameLength(nil, nil)
 
@@ -17,7 +15,7 @@ Begin Global:
     sameLength(cons(Xh, Xs), cons(Yh, Ys))
 
     Rule ContainsHead:
-    true
+    true()
     ------------------
     contains(cons(X, Xs), X)
 
@@ -27,7 +25,7 @@ Begin Global:
     contains(cons(Y, Xs), X)
 
     Rule ContainsAllBase:
-    true
+    true()
     ---------------------
     containsAll(nil, L2)
 
@@ -37,7 +35,7 @@ Begin Global:
     containsAll(cons(X, Xs), L2)
 
     Rule AppendBase:
-    true
+    true()
     ----------------
     append(nil, X, cons(X, nil))
 
@@ -47,7 +45,7 @@ Begin Global:
     append(cons(Xh, Xs), X, cons(Xh, Ys))
 
     Rule ReverseBase:
-    true
+    true()
     -----------------
     reverseOf(nil, nil)
 

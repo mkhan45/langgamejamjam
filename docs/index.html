@@ -38,20 +38,17 @@ End Stage Move
             let free_module = Module.cwrap('free_module', null, ['number']);
             window.free_module = free_module;
 
-            let create_game_state = Module.cwrap('create_game_state', 'number', []);
-            let game_state_reset = Module.cwrap('game_state_reset', null, ['number']);
-            let game_state_load_facts = Module.cwrap('game_state_load_facts', null, ['number', 'number']);
-            let game_state_load_global = Module.cwrap('game_state_load_global', null, ['number', 'number']);
-            let game_state_load_stage = Module.cwrap('game_state_load_stage', null, ['number', 'number', 'number']);
-            let game_state_check = Module.cwrap('game_state_check', 'number', ['number']);
             let module_stage_count = Module.cwrap('module_stage_count', 'number', ['number']);
             let module_get_stage_name = Module.cwrap('module_get_stage_name', 'string', ['number', 'number']);
-            let game_state_query = Module.cwrap('game_state_query', 'string', ['number', 'string']);
 
             let create_frontend = Module.cwrap('create_frontend', 'number', []);
             let free_frontend = Module.cwrap('free_frontend', null, ['number']);
             let frontend_load = Module.cwrap('frontend_load', 'number', ['number', 'string']);
             let frontend_query = Module.cwrap('frontend_query', 'string', ['number', 'string']);
+            let frontend_fact_count = Module.cwrap('frontend_fact_count', 'number', ['number']);
+            let frontend_rule_count = Module.cwrap('frontend_rule_count', 'number', ['number']);
+            let frontend_stage_count = Module.cwrap('frontend_stage_count', 'number', ['number']);
+            let frontend_stage_name = Module.cwrap('frontend_stage_name', 'string', ['number', 'number']);
 
             const reloadBtn = document.querySelector('#reload');
             const stagesSpan = document.querySelector('#stages');
@@ -60,31 +57,23 @@ End Stage Move
             const queryInput = document.querySelector('#query-input');
             const queryBtn = document.querySelector('#query-btn');
 
-            let gameState = create_game_state();
             let currentModule = null;
             let frontend = create_frontend();
 
-            const SAT_RESULTS = ['Sat', 'Unsat', 'Unknown'];
-
             function buildStageButtons() {
                 stagesSpan.innerHTML = '';
-                if (!currentModule) return;
-                const count = module_stage_count(currentModule);
+                const count = frontend_stage_count(frontend);
                 for (let i = 0; i < count; i++) {
                     const btn = document.createElement('button');
-                    btn.textContent = module_get_stage_name(currentModule, i);
+                    btn.textContent = frontend_stage_name(frontend, i);
                     btn.onclick = () => {
-                        game_state_load_stage(gameState, currentModule, i);
-                        const result = game_state_check(gameState);
-                        out.innerText += '\nLoaded stage: ' + btn.textContent + ' -> ' + SAT_RESULTS[result];
+                        out.innerText += '\nStage: ' + btn.textContent + ' (stage execution not yet implemented)';
                     };
                     stagesSpan.appendChild(btn);
                 }
             }
 
             reloadBtn.onclick = () => {
-                game_state_reset(gameState);
-                
                 if (currentModule) {
                     free_module(currentModule);
                 }
@@ -97,12 +86,18 @@ End Stage Move
                     return;
                 }
 
-                game_state_load_facts(gameState, currentModule);
-                game_state_load_global(gameState, currentModule);
-                frontend_load(frontend, code);
+                const loadResult = frontend_load(frontend, code);
+                if (loadResult !== 0) {
+                    out.innerText = 'Load error';
+                    return;
+                }
                 
-                const result = game_state_check(gameState);
-                out.innerText = module_to_string(currentModule) + '\n\nCheck: ' + SAT_RESULTS[result];
+                const factCount = frontend_fact_count(frontend);
+                const ruleCount = frontend_rule_count(frontend);
+                const stageCount = frontend_stage_count(frontend);
+                
+                out.innerText = module_to_string(currentModule) + 
+                    '\n\nLoaded: ' + factCount + ' facts, ' + ruleCount + ' global rules, ' + stageCount + ' stages';
                 
                 buildStageButtons();
             };

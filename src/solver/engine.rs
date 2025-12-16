@@ -431,16 +431,22 @@ impl<'p> Solver<'p> {
         args: &[TermId],
         queue: &mut SearchQueue,
     ) {
-        let facts: Vec<_> = self
+        let matching_facts: Vec<Vec<TermId>> = self
             .program
             .facts
             .iter()
-            .filter(|f| f.rel == rel)
-            .cloned()
+            .filter_map(|&prop_id| {
+                match self.program.props.get(prop_id) {
+                    Prop::App { rel: fact_rel, args: fact_args } if *fact_rel == rel => {
+                        Some(fact_args.clone())
+                    }
+                    _ => None,
+                }
+            })
             .collect();
 
-        for fact in facts {
-            if let Some(new_subst) = state.subst.unify_args(args, &fact.args, &self.program.terms) {
+        for fact_args in matching_facts {
+            if let Some(new_subst) = state.subst.unify_args(args, &fact_args, &self.program.terms) {
                 queue.push(state.with_subst(new_subst));
             }
         }
@@ -497,8 +503,14 @@ impl<'p> Solver<'p> {
     }
 
     pub fn query(&mut self, goal: PropId) -> SolutionIter<'_, 'p> {
+        let mut state = State::new(goal);
+        
+        for &fact_prop in &self.program.facts {
+            state = state.with_goal(fact_prop);
+        }
+
         let mut queue = SearchQueue::new();
-        queue.push(State::new(goal));
+        queue.push(state);
 
         SolutionIter {
             solver: self,
@@ -839,5 +851,68 @@ End Global
 
         assert_eq!(solutions.len(), 1);
         assert!(!solutions[0].constraints.is_empty());
+    }
+
+    #[test]
+    fn test_eq_conjunction_fails_on_conflict() {
+        let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+        let mut program = parse_and_compile(input);
+
+        let var = program.vars.alloc(crate::ir::Var {
+            name: "X".to_string(),
+        });
+        let var_term = program.terms.alloc(Term::Var(var));
+        let one_term = program.terms.alloc(Term::Int(1));
+        let two_term = program.terms.alloc(Term::Int(2));
+        
+        let eq1 = program.props.alloc(Prop::Eq(var_term, one_term));
+        let eq2 = program.props.alloc(Prop::Eq(var_term, two_term));
+        let query_prop = program.props.alloc(Prop::And(eq1, eq2));
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver.query(query_prop).collect();
+
+        assert_eq!(solutions.len(), 0, "and(eq(X, 1), eq(X, 2)) should fail");
+    }
+
+    #[test]
+    fn test_eq_conjunction_succeeds_when_compatible() {
+        let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+        let mut program = parse_and_compile(input);
+
+        let var_x = program.vars.alloc(crate::ir::Var {
+            name: "X".to_string(),
+        });
+        let var_y = program.vars.alloc(crate::ir::Var {
+            name: "Y".to_string(),
+        });
+        let var_x_term = program.terms.alloc(Term::Var(var_x));
+        let var_y_term = program.terms.alloc(Term::Var(var_y));
+        let one_term = program.terms.alloc(Term::Int(1));
+        
+        let eq1 = program.props.alloc(Prop::Eq(var_x_term, one_term));
+        let eq2 = program.props.alloc(Prop::Eq(var_x_term, var_y_term));
+        let query_prop = program.props.alloc(Prop::And(eq1, eq2));
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver.query(query_prop).collect();
+
+        assert_eq!(solutions.len(), 1, "and(eq(X, 1), eq(X, Y)) should succeed with Y=1");
+        
+        let y_val = solutions[0].subst.walk(var_y_term, &solver.program.terms);
+        match solver.program.terms.get(y_val) {
+            Term::Int(1) => {}
+            other => panic!("Expected Y=1, got {:?}", other),
+        }
     }
 }

@@ -346,6 +346,19 @@ pub enum RelKind {
 - `Interner<T>`: Deduplicates values (used for symbols)
 - `Program`: Contains all arenas (terms, props, vars, symbols, rels) plus facts, global_rules, and stages
 
+## Facts as Propositions
+
+Facts are stored as `Vec<PropId>` and compiled using `lower_term_to_prop`. This unified representation means:
+
+- `position(player, 0, 0)` → `Prop::App { rel: position, args: [...] }`
+- `eq(X, 1)` → `Prop::Eq(X_term, 1_term)`
+
+When solving a query, all facts are conjoined as goals with the query. This allows:
+- `Prop::App` facts to be matched during back-chaining
+- `Prop::Eq` facts to constrain variables via unification
+
+Variables defined in facts persist into query scope via the `var_map` stored in Frontend.
+
 ---
 
 # Solver Architecture (src/solver/engine.rs)
@@ -429,7 +442,7 @@ SMT constraints are collected but not solved yet (placeholder for Z3 integration
 - **`and(P, Q)`**: Becomes `Prop::And`
 - **`or(P, Q)`**: Becomes `Prop::Or`
 - **`eq(X, Y)`**: Becomes `Prop::Eq` for structural unification
-- **Facts**: Lowered via `lower_fact()`, must be ground App terms
+- **Facts**: Lowered via `lower_term_to_prop()` to propositions (App facts become `Prop::App`, eq facts become `Prop::Eq`)
 
 ## SMT Relations (builtin)
 ```
@@ -447,10 +460,11 @@ real_add, real_sub, real_mul, real_div
 ```rust
 pub struct Frontend {
     pub program: Program,
+    pub var_map: HashMap<String, TermId>,
 }
 ```
 
-- `load(source)`: Parses and compiles source string
+- `load(source)`: Parses and compiles source string, stores var_map from compilation
 - `query(query_str)`: Runs query with default limit (10 solutions)
 - `query_with_limit(query_str, n)`: Custom solution limit
 
