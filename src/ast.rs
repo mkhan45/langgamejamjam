@@ -5,53 +5,47 @@ mod parser_tests;
 
 use std::fmt;
 
-type Span<'a> = nom_locate::LocatedSpan<&'a str>;
-
-#[derive(Debug)]
-pub struct Module<'a> {
-    pub span: Span<'a>,
-    pub facts: Vec<Term<'a>>,
-    pub global_stage: Stage<'a>,
-    pub stages: Vec<Stage<'a>>,
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub facts: Vec<Term>,
+    pub global_stage: Stage,
+    pub stages: Vec<Stage>,
 }
 
-#[derive(Debug)]
-pub struct Stage<'a> {
-    pub span: Span<'a>,
-    pub name: &'a str,
-    pub rules: Vec<Rule<'a>>,
+#[derive(Debug, Clone)]
+pub struct Stage {
+    pub name: String,
+    pub rules: Vec<Rule>,
 }
 
-#[derive(Debug)]
-pub struct Rule<'a> {
-    pub span: Span<'a>,
-    pub name: &'a str,
-    pub premise: Term<'a>,
-    pub conclusion: Term<'a>,
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub name: String,
+    pub premise: Term,
+    pub conclusion: Term,
 }
 
-#[derive(Debug)]
-pub struct Term<'a> {
-    pub span: Span<'a>,
-    pub contents: TermContents<'a>,
+#[derive(Debug, Clone)]
+pub struct Term {
+    pub contents: TermContents,
 }
 
-#[derive(Debug)]
-pub enum TermContents<'a> {
-    App { rel: Rel<'a>, args: Vec<Term<'a>> },
-    Atom { text: &'a str },
-    Var { name: &'a str },
+#[derive(Debug, Clone)]
+pub enum TermContents {
+    App { rel: Rel, args: Vec<Term> },
+    Atom { text: String },
+    Var { name: String },
     Int { val: i32 },
     Float { val: f32 },
 }
 
-#[derive(Debug)]
-pub enum Rel<'a> {
-    SMTRel { name: &'a str },
-    UserRel { name: &'a str },
+#[derive(Debug, Clone)]
+pub enum Rel {
+    SMTRel { name: String },
+    UserRel { name: String },
 }
 
-impl<'a> fmt::Display for Term<'a> {
+impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.contents {
             TermContents::App { rel, args } => {
@@ -80,7 +74,7 @@ impl<'a> fmt::Display for Term<'a> {
     }
 }
 
-impl<'a> fmt::Display for Rule<'a> {
+impl fmt::Display for Rule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Rule {}:", self.name)?;
 
@@ -95,7 +89,7 @@ impl<'a> fmt::Display for Rule<'a> {
     }
 }
 
-impl<'a> fmt::Display for Stage<'a> {
+impl fmt::Display for Stage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Begin Stage {}:", self.name)?;
         for rule in &self.rules {
@@ -105,9 +99,8 @@ impl<'a> fmt::Display for Stage<'a> {
     }
 }
 
-impl<'a> fmt::Display for Module<'a> {
+impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Print Facts section
         writeln!(f, "Begin Facts:")?;
         for fact in &self.facts {
             writeln!(f, "    {}", fact)?;
@@ -115,14 +108,12 @@ impl<'a> fmt::Display for Module<'a> {
         writeln!(f, "End Facts")?;
         writeln!(f)?;
 
-        // Print Global section
         writeln!(f, "Begin Global:")?;
         for rule in &self.global_stage.rules {
             write!(f, "{}", rule)?;
         }
         writeln!(f, "End Global")?;
 
-        // Print regular stages
         for stage in &self.stages {
             writeln!(f)?;
             write!(f, "{}", stage)?;

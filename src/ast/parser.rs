@@ -13,59 +13,48 @@ use nom::{
 
 use crate::ast::{Module, Rule, Stage, Term, TermContents, Rel};
 
-type Span<'a> = LocatedSpan<&'a str>;
+pub type Span<'a> = LocatedSpan<&'a str>;
 
 pub fn parse_rule(s: Span) -> IResult<Span, Rule> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
 
-    // Parse "Rule" keyword
     let (s, _) = tag("Rule")(s)?;
     let (s, _) = multispace1(s)?;
 
-    // Parse rule name
     let (s, name) = parse_identifier(s)?;
 
-    // Parse ":"
     let (s, _) = char(':')(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse premise (with optional leading whitespace)
     let (s, _) = multispace0(s)?;
     let (s, premise) = parse_term(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse divider line (3+ dashes with optional whitespace)
     let (s, _) = multispace0(s)?;
     let (s, _) = take_while1(|c| c == '-')(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse conclusion (with optional leading whitespace)
     let (s, _) = multispace0(s)?;
     let (s, conclusion) = parse_term(s)?;
 
     Ok((s, Rule {
-        span: start_pos,
-        name,
+        name: name.to_string(),
         premise,
         conclusion,
     }))
 }
 
 pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
 
-    // Parse "Begin Stage" keyword
     let (s, _) = tag("Begin Stage")(s)?;
     let (s, _) = multispace1(s)?;
 
-    // Parse stage name
     let (s, name) = parse_identifier(s)?;
 
-    // Parse ":"
     let (s, _) = char(':')(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse zero or more rules (with optional whitespace between them)
     let (s, rules) = many0(|s| {
         let (s, _) = multispace0(s)?;
         let (s, rule) = parse_rule(s)?;
@@ -73,15 +62,12 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
         Ok((s, rule))
     }).parse(s)?;
 
-    // Parse "End Stage" keyword
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("End Stage")(s)?;
     let (s, _) = multispace1(s)?;
 
-    // Parse stage name again (should match the opening name)
     let (s, end_name) = parse_identifier(s)?;
 
-    // Verify the names match
     if name != end_name {
         return Err(nom::Err::Error(nom::error::Error::new(
             s,
@@ -90,21 +76,18 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
     }
 
     Ok((s, Stage {
-        span: start_pos,
-        name,
+        name: name.to_string(),
         rules,
     }))
 }
 
 pub fn parse_module(s: Span) -> IResult<Span, Module> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, _) = multispace0(s)?;
 
-    // Parse "Begin Facts:"
     let (s, _) = tag("Begin Facts:")(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse zero or more terms (facts), each on its own line
     let (s, facts) = many0(|s| {
         let (s, _) = multispace0(s)?;
         let (s, term) = parse_term(s)?;
@@ -112,17 +95,14 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
         Ok((s, term))
     }).parse(s)?;
 
-    // Parse "End Facts"
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("End Facts")(s)?;
     let (s, _) = multispace1(s)?;
 
-    // Parse "Begin Global:"
     let (s, _) = tag("Begin Global:")(s)?;
     let (s, _) = line_ending(s)?;
 
-    // Parse zero or more rules (global rules)
-    let (s, global_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, global_rules) = many0(|s| {
         let (s, _) = multispace0(s)?;
         let (s, rule) = parse_rule(s)?;
@@ -130,19 +110,15 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
         Ok((s, rule))
     }).parse(s)?;
 
-    // Parse "End Global"
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("End Global")(s)?;
     let (s, _) = multispace0(s)?;
 
-    // Create global stage
     let global_stage = Stage {
-        span: global_pos,
-        name: "Global",
+        name: "Global".to_string(),
         rules: global_rules,
     };
 
-    // Parse zero or more regular stages (with optional whitespace between them)
     let (s, stages) = many0(|s| {
         let (s, _) = multispace0(s)?;
         let (s, stage) = parse_stage(s)?;
@@ -151,7 +127,6 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
     }).parse(s)?;
 
     Ok((s, Module {
-        span: start_pos,
         facts,
         global_stage,
         stages,
@@ -175,7 +150,7 @@ fn parse_identifier(s: Span<'_>) -> IResult<Span<'_>, &str> {
 }
 
 fn parse_int(s: Span) -> IResult<Span, Term> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, sign) = opt(char('-')).parse(s)?;
     let (s, digits) = digit1(s)?;
 
@@ -187,13 +162,12 @@ fn parse_int(s: Span) -> IResult<Span, Term> {
     let val = val_str.parse::<i32>().unwrap();
 
     Ok((s, Term {
-        span: start_pos,
         contents: TermContents::Int { val },
     }))
 }
 
 fn parse_float(s: Span) -> IResult<Span, Term> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, sign) = opt(char('-')).parse(s)?;
     let (s, (int_part, _, frac_part)) = (digit1, char('.'), digit1).parse(s)?;
 
@@ -205,47 +179,41 @@ fn parse_float(s: Span) -> IResult<Span, Term> {
     let val = val_str.parse::<f32>().unwrap();
 
     Ok((s, Term {
-        span: start_pos,
         contents: TermContents::Float { val },
     }))
 }
 
 fn parse_var(s: Span) -> IResult<Span, Term> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, name) = parse_identifier(s)?;
 
-    // Check if first character is uppercase
     if !name.chars().next().unwrap().is_uppercase() {
         return Err(nom::Err::Error(nom::error::Error::new(s, nom::error::ErrorKind::Verify)));
     }
 
     Ok((s, Term {
-        span: start_pos,
-        contents: TermContents::Var { name },
+        contents: TermContents::Var { name: name.to_string() },
     }))
 }
 
 fn parse_atom(s: Span) -> IResult<Span, Term> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, text) = parse_identifier(s)?;
 
-    // Check if first character is lowercase
     if !text.chars().next().unwrap().is_lowercase() {
         return Err(nom::Err::Error(nom::error::Error::new(s, nom::error::ErrorKind::Verify)));
     }
 
     Ok((s, Term {
-        span: start_pos,
-        contents: TermContents::Atom { text },
+        contents: TermContents::Atom { text: text.to_string() },
     }))
 }
 
 fn parse_app(s: Span) -> IResult<Span, Term> {
-    let (s, start_pos) = position(s)?;
+    let (s, _) = position(s)?;
     let (s, rel_name) = parse_identifier(s)?;
     let (s, _) = multispace0(s)?;
 
-    // Helper parser for a term surrounded by whitespace
     fn ws_term(s: Span) -> IResult<Span, Term> {
         let (s, _) = multispace0(s)?;
         let (s, term) = parse_term(s)?;
@@ -253,7 +221,6 @@ fn parse_app(s: Span) -> IResult<Span, Term> {
         Ok((s, term))
     }
 
-    // Helper parser for comma separator surrounded by whitespace
     fn ws_comma(s: Span) -> IResult<Span, char> {
         let (s, _) = multispace0(s)?;
         let (s, c) = char(',')(s)?;
@@ -267,20 +234,18 @@ fn parse_app(s: Span) -> IResult<Span, Term> {
         char(')'),
     ).parse(s)?;
 
-    // For now, treat all relations as UserRel
-    let rel = Rel::UserRel { name: rel_name };
+    let rel = Rel::UserRel { name: rel_name.to_string() };
 
     Ok((s, Term {
-        span: start_pos,
         contents: TermContents::App { rel, args },
     }))
 }
 
 pub fn parse_term(s: Span) -> IResult<Span, Term> {
     alt((
-        parse_float,  // Try float before int (since float contains digits too)
+        parse_float,
         parse_int,
-        parse_app,    // Try app before var/atom (since it starts with identifier)
+        parse_app,
         parse_var,
         parse_atom,
     )).parse(s)

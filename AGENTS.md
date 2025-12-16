@@ -8,6 +8,11 @@ The Langame AST is a hierarchical structure consisting of four main levels:
 
 ```
 Module
+  ├── Facts (Terms)
+  ├── Global Stage
+  │     └── Rule(s)
+  │           ├── Premise (Term)
+  │           └── Conclusion (Term)
   └── Stage(s)
         └── Rule(s)
               ├── Premise (Term)
@@ -24,21 +29,46 @@ Represents a complete Langame file.
 ```rust
 pub struct Module<'a> {
     pub span: Span<'a>,
-    pub stages: Vec<Stage<'a>>
+    pub facts: Vec<Term<'a>>,
+    pub global_stage: Stage<'a>,
+    pub stages: Vec<Stage<'a>>,
 }
 ```
 
 **Fields:**
 - `span`: Source location information
-- `stages`: Zero or more stages
+- `facts`: Initial facts (terms) that are always true
+- `global_stage`: Global rules that apply across all stages (named "Global")
+- `stages`: Zero or more named stages
 
 **Grammar:**
 ```
-Module = <stage>*
+Module =
+    Begin Facts:
+    <term>*
+    End Facts
+
+    Begin Global:
+    <rule>*
+    End Global
+
+    <stage>*
 ```
 
 **Example:**
 ```
+Begin Facts:
+    initial(0)
+    count(5)
+End Facts
+
+Begin Global:
+Rule Increment:
+    count(X)
+    --------
+    count(add(X, 1))
+End Global
+
 Begin Stage Arithmetic:
   ...
 End Stage Arithmetic
@@ -200,52 +230,6 @@ pub enum Rel<'a> {
 
 Currently, the parser treats all relations as `UserRel`.
 
-## Display Format
-
-The AST implements `Display` for pretty-printing:
-
-### Module Display
-```
-Begin Stage <stage1>:
-<rules>
-End Stage <stage1>
-
-Begin Stage <stage2>:
-<rules>
-End Stage <stage2>
-```
-
-### Stage Display
-```
-Begin Stage <name>:
-Rule <rule1>:
-    <premise>
-    <dashes>
-    <conclusion>
-Rule <rule2>:
-    <premise>
-    <dashes>
-    <conclusion>
-End Stage <name>
-```
-
-### Rule Display
-```
-Rule <name>:
-    <premise>
-    <dashes>
-    <conclusion>
-```
-
-The divider length matches the longer of the premise or conclusion.
-
-### Term Display
-- **Application**: `relation(arg1, arg2, ...)`
-- **Atom**: `atom`
-- **Variable**: `Variable`
-- **Integer**: `42`
-- **Float**: `3.14`
-
 ## Parser Functions
 
 The parser provides three main entry points:
@@ -260,6 +244,19 @@ All functions return `IResult<Span, T>` where `T` is the corresponding AST node 
 ## Example Complete File
 
 ```
+Begin Facts:
+    initial(0)
+    max_count(100)
+    enabled(true)
+End Facts
+
+Begin Global:
+Rule IncrementCounter:
+    count(X)
+    --------
+    count(add(X, 1))
+End Global
+
 Begin Stage TypeSystem:
 Rule IntegerType:
     typeof(42, int)
@@ -286,7 +283,10 @@ End Stage Arithmetic
 ```
 
 This would parse into:
-- A `Module` with 2 stages
+- A `Module` with:
+  - 3 facts: `initial(0)`, `max_count(100)`, `enabled(true)`
+  - A global stage ("Global") with 1 rule
+  - 2 named stages: "TypeSystem" and "Arithmetic"
 - Stage 1 ("TypeSystem") with 2 rules
 - Stage 2 ("Arithmetic") with 2 rules
 - Each rule containing premise and conclusion terms with various structures (applications, variables, atoms, integers)
@@ -295,5 +295,6 @@ This would parse into:
 
 - Identifiers starting with uppercase letters are parsed as **variables**
 - Identifiers starting with lowercase letters are parsed as **atoms**
+- **Facts must be on separate lines** - each fact in the Facts section must be followed by a line ending to prevent keywords like "End" and "Facts" from being parsed as terms
 - The parser uses `nom` for parsing and `nom_locate` for span tracking
 - All AST nodes carry span information for error reporting and source mapping

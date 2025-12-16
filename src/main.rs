@@ -1,22 +1,43 @@
 pub mod ast;
+pub mod session;
 pub mod solve;
+pub mod solver;
 
-use wasm_bindgen::prelude::*;
+pub use session::GameSession;
+
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
 use nom::Finish;
 use ast::parser;
 
-#[wasm_bindgen]
-pub fn parse_module(input: &str) -> String {
-    let res = parser::parse_module(input.into()).finish();
-    match res {
-        Ok((rest, module)) => if rest.fragment().len() > 0 { format!("Error: trailing {}", rest.fragment()) } else { module.to_string() }
-        Err(e) => e.to_string(),
+use z3;
+
+use ast::Module;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn parse_module(input: *const c_char) -> *mut Module {
+    unsafe {
+        let inp = CStr::from_ptr(input).to_str().unwrap_or("");
+        let res = parser::parse_module(inp.into()).finish();
+        match res {
+            Ok((_rest, module)) => Box::leak(Box::new(module)) as *mut _,
+            Err(_e) => std::ptr::null::<Module>() as *mut _,
+        }
     }
-    // match res {
-    //     Ok((_s, module)) => module.to_string(),
-    //     Err(e) => e.to_string(),
-    // }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn module_to_string(module: *mut Module) -> *mut c_char {
+    unsafe {
+        let s = CString::new((*module).to_string()).unwrap();
+        s.into_raw()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn free_module(module: *mut Module) {
+    unsafe { std::ptr::drop_in_place(module) }
 }
 
 fn main() {

@@ -1,40 +1,66 @@
+<!DOCTYPE html>
 <html>
     <head>
         <title> editor </title>
     </head>
     <body>
-        <textarea id="input" style="width: 80vw; height: 80em">
+        <textarea id="input" style="width: 80vw; height: 30em">
 Begin Facts:
+    position(player, 0, 0)
 End Facts
 
 Begin Global:
-    Rule IsThree:
-        add(X, 2, 5)
-        ------------
-        isThree(X)
 End Global
 
-Begin Stage Basic:
-End Stage Basic
+Begin Stage Move:
+End Stage Move
         </textarea>
         <br/>
-        <button id="run">Run</button>
+        <button id="reload">Reload</button>
+        <span id="stages"></span>
         <br/>
-        <pre id="output">
-        </pre>
+        <pre id="output"></pre>
         <script type="module">
-            import init, { parse_module } from './langame.js';
-            await init();
+            import module_loader from './langame.js';
 
+            const Module = await module_loader({});
+            window.Module = Module;
+
+            let parse_module = Module.cwrap('parse_module', 'number', ['string']);
             window.parse_module = parse_module;
 
-            const btn = document.querySelector('#run');
+            let module_to_string = Module.cwrap('module_to_string', 'string', ['number']);
+            window.module_to_string = module_to_string;
+
+            let free_module = Module.cwrap('free_module', null, ['number']);
+            window.free_module = free_module;
+
+            const reloadBtn = document.querySelector('#reload');
+            const stagesSpan = document.querySelector('#stages');
             const inp = document.querySelector('#input');
             const out = document.querySelector('#output');
 
-            btn.onclick = () => {
-                console.log(inp.textContent);
-                out.innerText = parse_module(inp.textContent);
+            function render() {
+            }
+
+            function buildStageButtons() {
+                stagesSpan.innerHTML = '';
+                if (!session) return;
+                for (let i = 0; i < session.stage_count(); i++) {
+                    const btn = document.createElement('button');
+                    btn.textContent = session.get_stage_name(i);
+                    btn.onclick = () => {
+                        out.innerText = 'Stage: ' + btn.textContent;
+                    };
+                    stagesSpan.appendChild(btn);
+                }
+            }
+
+            reloadBtn.onclick = () => {
+                const code = inp.textContent;
+                const mod = parse_module(code);
+                console.log(mod);
+                out.innerText = module_to_string(mod);
             };
         </script>
     </body>
