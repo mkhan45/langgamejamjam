@@ -1,9 +1,5 @@
 pub mod ast;
-pub mod session;
-pub mod solve;
 pub mod solver;
-
-pub use session::GameSession;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
