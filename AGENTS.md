@@ -318,3 +318,4 @@ struct Frontend {
 
 - Avoid using `mod.rs`. Instead, for a module `example`, use an `example.rs` file and an `example/` directory.
 - Prefer higher-level conceptual reasoning to concrete code reasoning. Motivate code changes with a mental model of the problem when applicable.
+- Remember that we use immutable data structures in the solver

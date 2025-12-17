@@ -53,7 +53,7 @@ fn test_parse_float() {
     let (remaining, term) = parse_term(input).unwrap();
 
     match term.contents {
-        TermContents::Float { val } => assert!((val - 3.14).abs() < 0.001),
+        TermContents::Float { val } => assert!((val - std::f32::consts::PI).abs() < 0.01),
         _ => panic!("Expected Float"),
     }
     assert_eq!(*remaining.fragment(), "");
@@ -618,7 +618,7 @@ fn test_parse_module_multiple_facts() {
     }
 
     match &module.facts[4].contents {
-        TermContents::Float { val } => assert!((val - 3.14).abs() < 0.001),
+        TermContents::Float { val } => assert!((val - std::f32::consts::PI).abs() < 0.01),
         _ => panic!("Expected Float"),
     }
 

@@ -20,8 +20,8 @@ pub struct Frontend {
     pending_query_vars: Vec<(String, TermId)>,
 }
 
-impl Frontend {
-    pub fn new() -> Self {
+impl Default for Frontend {
+    fn default() -> Self {
         Self {
             program: Program::default(),
             var_map: HashMap::new(),
@@ -30,6 +30,12 @@ impl Frontend {
             pending_queue: None,
             pending_query_vars: Vec::new(),
         }
+    }
+}
+
+impl Frontend {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn load(&mut self, source: &str) -> Result<(), String> {
@@ -46,15 +52,19 @@ impl Frontend {
         }
     }
 
-    pub fn query(&mut self, query_str: &str) -> Result<Vec<String>, String> {
-        self.query_with_limit(query_str, 10)
+    /// Execute a batch query, returning up to `limit` solutions all at once.
+    ///
+    /// For incremental solution retrieval, use `query_start` / `query_next` instead.
+    pub fn query_batch(&mut self, query_str: &str, limit: usize) -> Result<Vec<String>, String> {
+        self.query_batch_with_steps(query_str, limit, self.max_steps)
     }
 
-    pub fn query_with_limit(&mut self, query_str: &str, limit: usize) -> Result<Vec<String>, String> {
-        self.query_with_limit_and_steps(query_str, limit, self.max_steps)
-    }
-
-    pub fn query_with_limit_and_steps(&mut self, query_str: &str, limit: usize, max_steps: usize) -> Result<Vec<String>, String> {
+    fn query_batch_with_steps(
+        &mut self,
+        query_str: &str,
+        limit: usize,
+        max_steps: usize,
+    ) -> Result<Vec<String>, String> {
         let term_result = parser::parse_term(query_str.into()).finish();
         let term = match term_result {
             Ok((_, term)) => term,
@@ -85,6 +95,11 @@ impl Frontend {
             .collect())
     }
 
+    /// Start an incremental query, returning the first solution if one exists.
+    ///
+    /// Use `query_next()` to retrieve subsequent solutions.
+    /// Use `query_stop()` to abandon the query.
+    /// Use `has_more_solutions()` to check if more results are available.
     pub fn query_start(&mut self, query_str: &str) -> Result<Option<String>, String> {
         let term_result = parser::parse_term(query_str.into()).finish();
         let term = match term_result {
@@ -95,12 +110,10 @@ impl Frontend {
         let (goal, query_vars) = Compiler::with_var_map(&mut self.program, self.var_map.clone())
             .compile_query(&term);
 
-        let combined_goal = goal;
-
         self.pending_query_vars = query_vars;
 
         let mut solver = Solver::new(&mut self.program);
-        let queue = solver.init_query(combined_goal, self.strategy);
+        let queue = solver.init_query(goal, self.strategy);
         let (solution, remaining_queue) = solver.step_until_solution(queue, self.max_steps);
 
         self.pending_queue = Some(remaining_queue);
@@ -108,16 +121,17 @@ impl Frontend {
         match solution {
             Some(state) => Ok(Some(format_solution(&self.pending_query_vars, &state, &self.program))),
             None => {
-                if self.pending_queue.as_ref().map_or(true, |q| q.is_empty()) {
+                if self.pending_queue.as_ref().is_none_or(|q| q.is_empty()) {
                     self.pending_queue = None;
-                    Ok(None)
-                } else {
-                    Ok(None)
                 }
+                Ok(None)
             }
         }
     }
 
+    /// Retrieve the next solution from an ongoing incremental query.
+    ///
+    /// Returns None if no more solutions are available.
     pub fn query_next(&mut self) -> Option<String> {
         let queue = self.pending_queue.take()?;
 
@@ -137,10 +151,12 @@ impl Frontend {
         solution.map(|state| format_solution(&self.pending_query_vars, &state, &self.program))
     }
 
+    /// Check if more solutions are available from the current incremental query.
     pub fn has_more_solutions(&self) -> bool {
-        self.pending_queue.as_ref().map_or(false, |q| !q.is_empty())
+        self.pending_queue.as_ref().is_some_and(|q| !q.is_empty())
     }
 
+    /// Abandon the current incremental query and free its state.
     pub fn query_stop(&mut self) {
         self.pending_queue = None;
         self.pending_query_vars.clear();

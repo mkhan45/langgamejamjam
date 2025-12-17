@@ -1,3 +1,5 @@
+#![allow(clippy::needless_borrow)]
+
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
@@ -69,7 +71,7 @@ pub unsafe extern "C" fn frontend_load(frontend: *mut Frontend, source: *const c
 pub unsafe extern "C" fn frontend_query(frontend: *mut Frontend, query: *const c_char) -> *mut c_char {
     unsafe {
         let query_str = CStr::from_ptr(query).to_str().unwrap_or("");
-        let result = (*frontend).query(query_str);
+        let result = (*frontend).query_batch(query_str, 10);
         let output = match result {
             Ok(solutions) => {
                 if solutions.is_empty() {

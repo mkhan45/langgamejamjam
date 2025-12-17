@@ -158,22 +158,22 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn lower_term_arg(&mut self, term: &Term, constraints: &mut Vec<PropId>) -> TermId {
+    fn lower_term_arg(&mut self, term: &Term) -> TermId {
         match &term.contents {
             TermContents::App { rel, args } => {
                 let rel_name = match rel {
                     Rel::SMTRel { name } | Rel::UserRel { name } => name.as_str(),
                 };
 
-                if rel_name == "next" && args.len() == 1 {
-                    if let TermContents::Var { name } = &args[0].contents {
-                        return self.get_or_create_next_var(name);
-                    }
+                if rel_name == "next" && args.len() == 1
+                    && let TermContents::Var { name } = &args[0].contents
+                {
+                    return self.get_or_create_next_var(name);
                 }
 
                 let lowered_args: Vec<TermId> = args
                     .iter()
-                    .map(|a| self.lower_term_arg(a, constraints))
+                    .map(|a| self.lower_term_arg(a))
                     .collect();
 
                 let sym = self.intern_symbol(rel_name);
@@ -222,18 +222,15 @@ impl<'a> Compiler<'a> {
                         self.alloc_prop(not_prop)
                     }
                     "eq" if args.len() == 2 => {
-                        let mut constraints: Vec<PropId> = Vec::new();
-                        let t1 = self.lower_term_arg(&args[0], &mut constraints);
-                        let t2 = self.lower_term_arg(&args[1], &mut constraints);
+                        let t1 = self.lower_term_arg(&args[0]);
+                        let t2 = self.lower_term_arg(&args[1]);
                         let eq_prop = Prop::Eq(t1, t2);
-                        let eq_prop_id = self.alloc_prop(eq_prop);
-                        self.conjoin_all(constraints, eq_prop_id)
+                        self.alloc_prop(eq_prop)
                     }
                     _ => {
-                        let mut constraints: Vec<PropId> = Vec::new();
                         let lowered_args: Vec<TermId> = args
                             .iter()
-                            .map(|a| self.lower_term_arg(a, &mut constraints))
+                            .map(|a| self.lower_term_arg(a))
                             .collect();
 
                         let arity = lowered_args.len();
@@ -249,9 +246,7 @@ impl<'a> Compiler<'a> {
                             rel: rel_id,
                             args: lowered_args,
                         };
-                        let app_prop_id = self.alloc_prop(app_prop);
-
-                        self.conjoin_all(constraints, app_prop_id)
+                        self.alloc_prop(app_prop)
                     }
                 }
             }
@@ -259,13 +254,6 @@ impl<'a> Compiler<'a> {
                 self.alloc_prop(Prop::True)
             }
         }
-    }
-
-    fn conjoin_all(&mut self, props: Vec<PropId>, base: PropId) -> PropId {
-        props.into_iter().fold(base, |acc, p| {
-            let and_prop = Prop::And(p, acc);
-            self.alloc_prop(and_prop)
-        })
     }
 
     fn lower_fact(&mut self, term: &Term) -> PropId {
@@ -282,36 +270,33 @@ impl<'a> Compiler<'a> {
 
         let premise_body = self.lower_term_to_prop(&rule.premise);
 
-        let (head_rel, head_args, head_constraints) = match &rule.conclusion.contents {
+        let (head_rel, head_args) = match &rule.conclusion.contents {
             TermContents::App { rel, args } => {
                 let rel_name = match rel {
                     Rel::SMTRel { name } | Rel::UserRel { name } => name.as_str(),
                 };
 
-                let mut constraints: Vec<PropId> = Vec::new();
                 let lowered_args: Vec<TermId> = args
                     .iter()
-                    .map(|a| self.lower_term_arg(a, &mut constraints))
+                    .map(|a| self.lower_term_arg(a))
                     .collect();
 
                 let arity = lowered_args.len();
                 let rel_id = self.get_or_create_rel(rel_name, arity, RelKind::User);
 
-                (rel_id, lowered_args, constraints)
+                (rel_id, lowered_args)
             }
             _ => {
                 let dummy_rel = self.get_or_create_rel("_true", 0, RelKind::User);
-                (dummy_rel, Vec::new(), Vec::new())
+                (dummy_rel, Vec::new())
             }
         };
-
-        let body = self.conjoin_all(head_constraints, premise_body);
 
         Clause {
             name: rule.name.clone(),
             head_rel,
             head_args,
-            body,
+            body: premise_body,
         }
     }
 

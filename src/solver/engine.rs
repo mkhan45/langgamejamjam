@@ -296,21 +296,21 @@ impl ConstraintStore {
         let mut new_subst = subst.clone();
 
         for (var_id, z3_var) in int_vars {
-            if let Some(val) = model.eval(z3_var, true) {
-                if let Some(i) = val.as_i64() {
-                    let term_id = program.terms.alloc(Term::Int(i as i32));
-                    new_subst = new_subst.extend(*var_id, term_id);
-                }
+            if let Some(val) = model.eval(z3_var, true)
+                && let Some(i) = val.as_i64()
+            {
+                let term_id = program.terms.alloc(Term::Int(i as i32));
+                new_subst = new_subst.extend(*var_id, term_id);
             }
         }
 
         for (var_id, z3_var) in real_vars {
-            if let Some(val) = model.eval(z3_var, true) {
-                if let Some((num, den)) = val.as_rational() {
-                    let f = num as f32 / den as f32;
-                    let term_id = program.terms.alloc(Term::Float(f));
-                    new_subst = new_subst.extend(*var_id, term_id);
-                }
+            if let Some(val) = model.eval(z3_var, true)
+                && let Some((num, den)) = val.as_rational()
+            {
+                let f = num as f32 / den as f32;
+                let term_id = program.terms.alloc(Term::Float(f));
+                new_subst = new_subst.extend(*var_id, term_id);
             }
         }
 
@@ -499,10 +499,10 @@ impl<'p> Solver<'p> {
         match self.program.terms.get(term_id).clone() {
             Term::Var(v) => {
                 let var_name = &self.program.vars.get(v).name;
-                if let Some(&original_state_var_term_id) = self.program.state_var_term_ids.get(var_name) {
-                    if original_state_var_term_id == term_id {
-                        return term_id;
-                    }
+                if let Some(&original_state_var_term_id) = self.program.state_var_term_ids.get(var_name)
+                    && original_state_var_term_id == term_id
+                {
+                    return term_id;
                 }
                 
                 if let Some(&new_term) = var_map.get(&v) {
@@ -813,19 +813,17 @@ impl<'p> Solver<'p> {
 
             if let Some((goal, remaining)) = state.pop_goal() {
                 self.step_prop(remaining, goal, &mut queue);
-            } else {
-                if let Some(solved_subst) =
-                    state.constraints.solve_all(&state.subst, self.program, &self.z3_solver)
-                {
-                    return (
-                        Some(State {
-                            subst: solved_subst,
-                            constraints: ConstraintStore::new(),
-                            goals: Vector::new(),
-                        }),
-                        queue,
-                    );
-                }
+            } else if let Some(solved_subst) =
+                state.constraints.solve_all(&state.subst, self.program, &self.z3_solver)
+            {
+                return (
+                    Some(State {
+                        subst: solved_subst,
+                        constraints: ConstraintStore::new(),
+                        goals: Vector::new(),
+                    }),
+                    queue,
+                );
             }
         }
         (None, queue)
@@ -869,10 +867,10 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
     type Item = State;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(max) = self.max_solutions {
-            if self.solutions_found >= max {
-                return None;
-            }
+        if let Some(max) = self.max_solutions
+            && self.solutions_found >= max
+        {
+            return None;
         }
 
         while let Some(state) = self.queue.pop() {
@@ -883,17 +881,15 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
 
             if let Some((goal, remaining)) = state.pop_goal() {
                 self.solver.step_prop(remaining, goal, &mut self.queue);
-            } else {
-                if let Some(solved_subst) =
-                    state.constraints.solve_all(&state.subst, self.solver.program, &self.solver.z3_solver)
-                {
-                    self.solutions_found += 1;
-                    return Some(State {
-                        subst: solved_subst,
-                        constraints: ConstraintStore::new(),
-                        goals: Vector::new(),
-                    });
-                }
+            } else if let Some(solved_subst) =
+                state.constraints.solve_all(&state.subst, self.solver.program, &self.solver.z3_solver)
+            {
+                self.solutions_found += 1;
+                return Some(State {
+                    subst: solved_subst,
+                    constraints: ConstraintStore::new(),
+                    goals: Vector::new(),
+                });
             }
         }
         None
@@ -933,7 +929,7 @@ pub fn format_solution(
             parts.push(format!("{} = {}", name, value));
         }
     }
-    if state.constraints.len() > 0 {
+    if !state.constraints.is_empty() {
         parts.push(format!("[{} constraints]", state.constraints.len()));
     }
     if parts.is_empty() {

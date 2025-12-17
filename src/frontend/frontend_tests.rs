@@ -2,96 +2,60 @@
 mod tests {
     use crate::frontend::Frontend;
 
+    fn query_succeeds(frontend: &mut Frontend, query: &str) -> bool {
+        frontend.query_batch(query, 10).unwrap_or_default().iter().any(|r| r != "no")
+    }
+
+    fn query_fails(frontend: &mut Frontend, query: &str) -> bool {
+        !query_succeeds(frontend, query)
+    }
+
     #[test]
     fn test_position_query() {
         let mut frontend = Frontend::new();
-        frontend.load(r#"Begin Facts:
-    position(player, 0, 0)
-End Facts
+        frontend.load(
+            "Begin Facts:\n    position(player, 0, 0)\nEnd Facts\n\nBegin Global:\nEnd Global\n",
+        )
+        .unwrap();
 
-Begin Global:
-End Global
-"#).unwrap();
-
-        eprintln!("Facts: {}", frontend.program.facts.len());
-        for &fact_prop_id in &frontend.program.facts {
-            let fact_prop = frontend.program.props.get(fact_prop_id);
-            eprintln!("  fact: {:?}", fact_prop);
-        }
-        eprintln!("Rels:");
-        for (id, rel) in frontend.program.rels.iter() {
-            eprintln!("  {:?}: {:?}", id, rel);
-        }
-        
-        let result = frontend.query("position(player, X, Y)").unwrap();
-        eprintln!("Query result: {:?}", result);
-        assert!(!result.is_empty(), "Expected at least one solution");
+        assert!(query_succeeds(&mut frontend, "position(player, X, Y)"));
     }
 
     #[test]
     fn test_eq_fact_constrains_query() {
         let mut frontend = Frontend::new();
-        frontend.load(r#"Begin Facts:
-    eq(X, 1)
-End Facts
+        frontend.load("Begin Facts:\n    eq(X, 1)\nEnd Facts\n\nBegin Global:\nEnd Global\n").unwrap();
 
-Begin Global:
-End Global
-"#).unwrap();
-
-        let result = frontend.query("eq(X, 2)").unwrap();
-        assert!(result.is_empty(), "eq(X, 2) should fail when eq(X, 1) is a fact, got: {:?}", result);
+        assert!(query_fails(&mut frontend, "eq(X, 2)"));
     }
 
     #[test]
     fn test_eq_fact_allows_compatible_query() {
         let mut frontend = Frontend::new();
-        frontend.load(r#"Begin Facts:
-    eq(X, 1)
-End Facts
+        frontend.load("Begin Facts:\n    eq(X, 1)\nEnd Facts\n\nBegin Global:\nEnd Global\n").unwrap();
 
-Begin Global:
-End Global
-"#).unwrap();
-
-        let result = frontend.query("eq(X, Y)").unwrap();
-        assert!(!result.is_empty(), "eq(X, Y) should succeed with Y=1 when eq(X, 1) is a fact");
+        assert!(query_succeeds(&mut frontend, "eq(X, Y)"));
     }
 
     #[test]
     fn test_eq_with_cons_term() {
         let mut frontend = Frontend::new();
-        frontend.load(r#"Begin Facts:
-    eq(X, cons(A, B))
-End Facts
+        frontend.load("Begin Facts:\n    eq(X, cons(A, B))\nEnd Facts\n\nBegin Global:\nEnd Global\n")
+            .unwrap();
 
-Begin Global:
-End Global
-"#).unwrap();
-
-        let result = frontend.query("eq(X, Y)").unwrap();
-        assert!(!result.is_empty(), "eq(X, cons(A, B)) should work with relational solver");
+        assert!(query_succeeds(&mut frontend, "eq(X, Y)"));
     }
 
     #[test]
     fn test_eq_fact_with_rule_present() {
         let mut frontend = Frontend::new();
-        frontend.load(r#"Begin Facts:
-    eq(L, pair(1, 2))
-End Facts
+        frontend.load(
+            "Begin Facts:\n    eq(L, pair(1, 2))\nEnd Facts\n\nBegin Global:\n    Rule Test:\n    eq(A, B)\n    --------\n    someThing(B, A)\nEnd Global\n"
+        ).unwrap();
 
-Begin Global:
-    Rule Test:
-    eq(A, B)
-    --------
-    someThing(B, A)
-End Global
-"#).unwrap();
-
-        let result = frontend.query("eq(A, L)").unwrap();
-        eprintln!("Query result: {:?}", result);
-        assert!(!result.is_empty(), "Expected at least one solution");
-        assert!(result[0].contains("pair"), "Expected L to be bound to pair(1, 2), got: {:?}", result);
+        let result = frontend.query_batch("eq(A, L)", 10).unwrap();
+        assert!(!result.is_empty());
+        assert!(result[0].contains("pair"));
     }
 
     #[test]
