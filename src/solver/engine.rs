@@ -152,28 +152,19 @@ impl ConstraintStore {
         })
     }
 
-    pub fn check_ground_constraints(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> bool {
-        let ground: Vec<_> = self
-            .constraints
-            .iter()
-            .filter(|c| Self::is_ground_constraint(c, subst, program))
+    /// Partition constraints into ground (fully determined) and non-ground (contains variables).
+    /// Used during SLD resolution for eager constraint propagation.
+    fn partition_ground_constraints(&self, subst: &Subst, program: &Program) -> (Vec<ArithConstraint>, Vec<ArithConstraint>) {
+        self.iter()
             .cloned()
-            .collect();
-
-        if ground.is_empty() {
-            return true;
-        }
-
-        let ground_store = ConstraintStore {
-            constraints: ground.into_iter().collect(),
-        };
-        ground_store.solve(subst, program, z3_solver).is_some()
+            .partition(|c| Self::is_ground_constraint(c, subst, program))
     }
 
-    pub fn try_solve_and_propagate(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<(Subst, ConstraintStore)> {
-        let (ground, non_ground): (Vec<_>, Vec<_>) = self.iter()
-            .cloned()
-            .partition(|c| Self::is_ground_constraint(c, subst, program));
+    /// SLD resolution constraint propagation: solve ground constraints, defer non-ground.
+    /// Returns refined substitution and remaining (non-ground) constraints.
+    /// Used during search to eagerly prune infeasible branches.
+    pub fn propagate_ground(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<(Subst, ConstraintStore)> {
+        let (ground, non_ground) = self.partition_ground_constraints(subst, program);
         
         let ground_store = ConstraintStore {
             constraints: ground.into_iter().collect(),
@@ -203,7 +194,10 @@ impl ConstraintStore {
         self.constraints.is_empty()
     }
 
-    pub fn solve(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<Subst> {
+    /// Final constraint validation: solve all constraints (ground and non-ground).
+    /// Used after proof search completes to verify the solution satisfies all constraints.
+    /// Critical for negation: ensures phantom proofs with unsatisfiable constraints are rejected.
+    pub fn solve_all(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<Subst> {
         self.solve_constraints(subst, program, z3_solver)
     }
 
@@ -504,12 +498,9 @@ impl<'p> Solver<'p> {
     fn rename_term(&mut self, term_id: TermId, var_map: &mut HashMap<VarId, TermId>) -> TermId {
         match self.program.terms.get(term_id).clone() {
             Term::Var(v) => {
-                // Check if this is a state variable - if so, don't rename it
-                // Only skip renaming if this is the original state var term ID (still a Var)
                 let var_name = &self.program.vars.get(v).name;
                 if let Some(&original_state_var_term_id) = self.program.state_var_term_ids.get(var_name) {
                     if original_state_var_term_id == term_id {
-                        // State variables should keep their original binding
                         return term_id;
                     }
                 }
@@ -626,23 +617,16 @@ impl<'p> Solver<'p> {
                         self.step_prop(remaining, goal, &mut neg_queue);
                     } else {
                         // Found a complete proof state - verify constraints are satisfiable
-                        // A "solution" with unsatisfiable constraints isn't a real solution.
-                        // Only fail negation if the goal has a VALID proof (constraints satisfy).
-                        if let Some(_solved_subst) = neg_state.constraints.solve(&neg_state.subst, self.program, &self.z3_solver) {
-                            // The goal has a valid proof with satisfied constraints
-                            // So negation fails
-                            found_valid_solution = true;
-                            break;
-                        }
-                        // else: constraints unsatisfiable, continue checking other branches
+                        if let Some(_solved_subst) = neg_state.constraints.solve_all(&neg_state.subst, self.program, &self.z3_solver) {
+                             found_valid_solution = true;
+                             break;
+                         }
                     }
                 }
                 
-                // Only push state if we didn't find a valid solution for the goal
                 if !found_valid_solution {
                     queue.push(state);
                 }
-                // If found_valid_solution=true, we don't push, so negation fails (state removed from queue)
             }
             Prop::App { rel, args } => {
                 let rel_info = self.program.rels.get(rel).clone();
@@ -655,7 +639,7 @@ impl<'p> Solver<'p> {
                             let new_state = state.with_constraint(constraint);
                             if let Some((solved_subst, remaining)) = new_state
                                 .constraints
-                                .try_solve_and_propagate(&new_state.subst, self.program, &self.z3_solver)
+                                .propagate_ground(&new_state.subst, self.program, &self.z3_solver)
                             {
                                 queue.push(State {
                                     subst: solved_subst,
@@ -670,7 +654,7 @@ impl<'p> Solver<'p> {
                             let new_state = state.with_constraint(constraint);
                             if let Some((solved_subst, remaining)) = new_state
                                 .constraints
-                                .try_solve_and_propagate(&new_state.subst, self.program, &self.z3_solver)
+                                .propagate_ground(&new_state.subst, self.program, &self.z3_solver)
                             {
                                 queue.push(State {
                                     subst: solved_subst,
@@ -831,7 +815,7 @@ impl<'p> Solver<'p> {
                 self.step_prop(remaining, goal, &mut queue);
             } else {
                 if let Some(solved_subst) =
-                    state.constraints.solve(&state.subst, self.program, &self.z3_solver)
+                    state.constraints.solve_all(&state.subst, self.program, &self.z3_solver)
                 {
                     return (
                         Some(State {
@@ -901,7 +885,7 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
                 self.solver.step_prop(remaining, goal, &mut self.queue);
             } else {
                 if let Some(solved_subst) =
-                    state.constraints.solve(&state.subst, self.solver.program, &self.solver.z3_solver)
+                    state.constraints.solve_all(&state.subst, self.solver.program, &self.solver.z3_solver)
                 {
                     self.solutions_found += 1;
                     return Some(State {
@@ -1212,7 +1196,6 @@ End Global
                 .collect();
 
             assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-            // Constraints should be solved by Z3
             assert!(
                 solutions[0].constraints.is_empty(),
                 "constraints should be solved, strategy: {:?}",
@@ -1641,7 +1624,6 @@ End Global
             .with_limit(10)
             .collect();
 
-        // Should find: nil(0), apple(10), banana(5), apple+apple(20), apple+banana(15), banana+apple(15), banana+banana(10)
         assert!(solutions.len() >= 5, "Should find multiple cart combinations, got {}", solutions.len());
     }
 
@@ -1678,7 +1660,6 @@ End Global
             .with_max_steps(1000)
             .collect();
 
-        // Should find cons(apple, nil) since apple costs 10
         assert_eq!(solutions.len(), 1, "Should find exactly one cart costing 10 with max 1 item");
     }
 
@@ -1719,7 +1700,6 @@ End Global
             .with_max_steps(5000)
             .collect();
 
-        // Should find at least one solution (e.g., cons(banana, cons(banana, cons(banana, cons(apple, nil)))) = 5+5+5+10 = 25)
         assert!(!solutions.is_empty(), "Should find carts costing 25 with unbound MaxSize");
     }
 }

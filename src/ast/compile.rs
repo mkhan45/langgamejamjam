@@ -37,7 +37,6 @@ pub struct Compiler<'a> {
     rel_map: HashMap<String, RelId>,
     var_map: HashMap<String, TermId>,
     next_var_map: HashMap<String, TermId>,
-    fresh_var_counter: u32,
 }
 
 impl<'a> Compiler<'a> {
@@ -52,7 +51,6 @@ impl<'a> Compiler<'a> {
             rel_map,
             var_map: HashMap::new(),
             next_var_map: HashMap::new(),
-            fresh_var_counter: 0,
         };
         compiler.register_builtin_relations();
         compiler
@@ -69,7 +67,6 @@ impl<'a> Compiler<'a> {
             rel_map,
             var_map,
             next_var_map: HashMap::new(),
-            fresh_var_counter: 0,
         };
         compiler.register_builtin_relations();
         compiler
@@ -115,15 +112,6 @@ impl<'a> Compiler<'a> {
         term_id
     }
 
-    fn fresh_var(&mut self) -> TermId {
-        let name = format!("_G{}", self.fresh_var_counter);
-        self.fresh_var_counter += 1;
-        let var = Var { name: name.clone() };
-        let var_id = self.program.vars.alloc(var);
-        let term_id = self.program.terms.alloc(IRTerm::Var(var_id));
-        term_id
-    }
-
     fn intern_symbol(&mut self, s: &str) -> SymbolId {
         self.program.symbols.intern(s.to_string())
     }
@@ -139,7 +127,6 @@ impl<'a> Compiler<'a> {
     fn clear_scope(&mut self) {
         self.var_map.clear();
         self.next_var_map.clear();
-        self.fresh_var_counter = 0;
     }
 
     fn get_or_create_next_var(&mut self, name: &str) -> TermId {
@@ -184,33 +171,13 @@ impl<'a> Compiler<'a> {
                     }
                 }
 
-                if self.is_smt_relation(rel_name) {
-                    let fresh_term_id = self.fresh_var();
+                let lowered_args: Vec<TermId> = args
+                    .iter()
+                    .map(|a| self.lower_term_arg(a, constraints))
+                    .collect();
 
-                    let mut lowered_args: Vec<TermId> = args
-                        .iter()
-                        .map(|a| self.lower_term_arg(a, constraints))
-                        .collect();
-                    lowered_args.push(fresh_term_id);
-
-                    let arity = lowered_args.len();
-                    let rel_id = self.get_or_create_rel(rel_name, arity, self.smt_kind(rel_name));
-                    let prop = Prop::App {
-                        rel: rel_id,
-                        args: lowered_args,
-                    };
-                    constraints.push(self.alloc_prop(prop));
-
-                    fresh_term_id
-                } else {
-                    let lowered_args: Vec<TermId> = args
-                        .iter()
-                        .map(|a| self.lower_term_arg(a, constraints))
-                        .collect();
-
-                    let sym = self.intern_symbol(rel_name);
-                    self.alloc_term(IRTerm::App { sym, args: lowered_args })
-                }
+                let sym = self.intern_symbol(rel_name);
+                self.alloc_term(IRTerm::App { sym, args: lowered_args })
             }
             _ => self.lower_simple_term(term),
         }

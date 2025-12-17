@@ -173,12 +173,16 @@ unify(_, _)         = None                         otherwise
 
 ### SMT Constraint Solving
 
-SMT relations (`int_add`, `real_lt`, etc.) are not solved immediately. Instead:
+SMT relations (`int_add`, `real_lt`, etc.) deferred during SLD resolution:
 1. When encountered, add constraint to `ConstraintStore`
 2. Continue processing other goals
-3. When goals exhausted, invoke Z3 on collected constraints
+3. At solution time (empty goals), invoke Z3 on all accumulated constraints
 4. If SAT: extract model, bind variables → solution
 5. If UNSAT: discard state
+
+**Two constraint operations:**
+- `propagate_ground(subst, program, z3_solver)` — Eager propagation during search: solve only fully-ground constraints, defer variables. Used for in-search pruning.
+- `solve_all(subst, program, z3_solver)` — Final validation after proof search: solve all constraints (ground and non-ground). Critical for correctness in negation.
 
 **Constraint translation** (examples):
 ```
@@ -207,17 +211,6 @@ not(P)              →  Prop::Not(lower(P))
 eq(X, Y)            →  Prop::Eq(lower(X), lower(Y))
 user_rel(args...)   →  Prop::App { rel: user_rel, args: [...] }
 smt_rel(args...)    →  Prop::App { rel: smt_rel, args: [...] }  (RelKind::SMT*)
-```
-
-### SMT in Nested Positions
-When an SMT relation appears as an argument (not at top level), it's **desugared**:
-```
-foo(int_add(X, 1))
-→  let Fresh = fresh_var()
-   Prop::And(
-     Prop::App { rel: int_add, args: [X, 1, Fresh] },
-     Prop::App { rel: foo, args: [Fresh] }
-   )
 ```
 
 ### Rule Compilation
