@@ -76,8 +76,12 @@ End Global
             <option value="0">BFS</option>
             <option value="1">DFS</option>
         </select>
+        <label for="max-steps-input">Max steps:</label>
+        <input id="max-steps-input" type="number" value="10000" style="width: 80px"></input>
         <input id="query-input" type="text" value="and(containsAll(L, A), palindrome(A))" style="width: 300px"></input>
         <button id="query-btn">Query</button>
+        <button id="next-btn" disabled>Next</button>
+        <button id="stop-btn" disabled>Stop</button>
         <br/>
         <pre id="output"></pre>
         <script type="module">
@@ -108,6 +112,12 @@ End Global
             let frontend_stage_name = Module.cwrap('frontend_stage_name', 'string', ['number', 'number']);
             let frontend_set_strategy = Module.cwrap('frontend_set_strategy', null, ['number', 'number']);
             let frontend_get_strategy = Module.cwrap('frontend_get_strategy', 'number', ['number']);
+            let frontend_set_max_steps = Module.cwrap('frontend_set_max_steps', null, ['number', 'number']);
+            let frontend_get_max_steps = Module.cwrap('frontend_get_max_steps', 'number', ['number']);
+            let frontend_query_start = Module.cwrap('frontend_query_start', 'string', ['number', 'string']);
+            let frontend_query_next = Module.cwrap('frontend_query_next', 'string', ['number']);
+            let frontend_has_more = Module.cwrap('frontend_has_more', 'number', ['number']);
+            let frontend_query_stop = Module.cwrap('frontend_query_stop', null, ['number']);
 
             const reloadBtn = document.querySelector('#reload');
             const stagesSpan = document.querySelector('#stages');
@@ -115,13 +125,20 @@ End Global
             const out = document.querySelector('#output');
             const queryInput = document.querySelector('#query-input');
             const queryBtn = document.querySelector('#query-btn');
+            const nextBtn = document.querySelector('#next-btn');
+            const stopBtn = document.querySelector('#stop-btn');
             const strategySelect = document.querySelector('#strategy-select');
+            const maxStepsInput = document.querySelector('#max-steps-input');
 
             let currentModule = null;
             let frontend = create_frontend();
 
             strategySelect.onchange = () => {
                 frontend_set_strategy(frontend, parseInt(strategySelect.value));
+            };
+
+            maxStepsInput.onchange = () => {
+                frontend_set_max_steps(frontend, parseInt(maxStepsInput.value) || 10000);
             };
 
             function buildStageButtons() {
@@ -165,11 +182,31 @@ End Global
                 buildStageButtons();
             };
 
+            function updateButtons() {
+                const hasMore = frontend_has_more(frontend) !== 0;
+                nextBtn.disabled = !hasMore;
+                stopBtn.disabled = !hasMore;
+            }
+
             queryBtn.onclick = () => {
                 const queryStr = queryInput.value;
                 if (!queryStr) return;
-                const result = frontend_query(frontend, queryStr);
+                frontend_query_stop(frontend);
+                const result = frontend_query_start(frontend, queryStr);
                 out.innerText += '\n\nQuery: ' + queryStr + '\n' + result;
+                updateButtons();
+            };
+
+            nextBtn.onclick = () => {
+                const result = frontend_query_next(frontend);
+                out.innerText += '\n' + result;
+                updateButtons();
+            };
+
+            stopBtn.onclick = () => {
+                frontend_query_stop(frontend);
+                out.innerText += '\n(stopped)';
+                updateButtons();
             };
         </script>
     </body>

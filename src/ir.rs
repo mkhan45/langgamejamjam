@@ -128,6 +128,54 @@ pub enum Term {
     App { sym: SymbolId, args: Vec<TermId> },
 }
 
+impl Term {
+    pub fn to_z3_int(
+        &self,
+        var_cache: &mut std::collections::HashMap<VarId, z3::ast::Int>,
+    ) -> Option<z3::ast::Int> {
+        match self {
+            Term::Int(i) => Some(z3::ast::Int::from_i64((*i).into())),
+            Term::Var(v) => {
+                let z3_var = var_cache
+                    .entry(*v)
+                    .or_insert_with(|| z3::ast::Int::new_const(format!("v{}", v.index())));
+                Some(z3_var.clone())
+            }
+            _ => None,
+        }
+    }
+
+    pub fn to_z3_real(
+        &self,
+        var_cache: &mut std::collections::HashMap<VarId, z3::ast::Real>,
+    ) -> Option<z3::ast::Real> {
+        match self {
+            Term::Float(f) => {
+                let (num, den) = float_to_rational(*f);
+                Some(z3::ast::Real::from_rational(num, den))
+            }
+            Term::Int(i) => Some(z3::ast::Real::from_rational((*i).into(), 1)),
+            Term::Var(v) => {
+                let z3_var = var_cache
+                    .entry(*v)
+                    .or_insert_with(|| z3::ast::Real::new_const(format!("r{}", v.index())));
+                Some(z3_var.clone())
+            }
+            _ => None,
+        }
+    }
+}
+
+fn float_to_rational(f: f32) -> (i64, i64) {
+    const PRECISION: i64 = 1_000_000;
+    let num = (f * PRECISION as f32).round() as i64;
+    fn gcd(a: i64, b: i64) -> i64 {
+        if b == 0 { a.abs() } else { gcd(b, a % b) }
+    }
+    let g = gcd(num, PRECISION);
+    (num / g, PRECISION / g)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
     True,

@@ -459,7 +459,43 @@ pub enum ArithConstraint {
 }
 ```
 
-SMT constraints are collected but not solved yet (placeholder for Z3 integration).
+### Z3 Constraint Solving
+
+The solver uses Z3 (via the `z3` crate with bundled feature) to solve arithmetic constraints.
+
+**How it works:**
+1. When the solver reaches a state with no remaining goals but has pending constraints, it calls `ConstraintStore::solve()`
+2. `solve()` translates `ArithConstraint`s to Z3 assertions
+3. Z3 checks satisfiability and, if SAT, extracts a model
+4. Variable bindings from the model are added back to the substitution
+
+**Term to Z3 conversion:**
+- `Term::Int(i)` → Z3 integer constant
+- `Term::Float(f)` → Z3 rational (float × 1,000,000 / 1,000,000 for precision)
+- `Term::Var(v)` → Z3 integer/real variable (fresh if not in map)
+
+**Constraint translation:**
+| ArithConstraint | Z3 Assertion |
+|-----------------|--------------|
+| `IntAdd(a, b, c)` | `a + b = c` |
+| `IntSub(a, b, c)` | `a - b = c` |
+| `IntMul(a, b, c)` | `a * b = c` |
+| `IntDiv(a, b, c)` | `a / b = c` |
+| `IntEq(a, b)` | `a = b` |
+| `IntNeq(a, b)` | `a ≠ b` |
+| `IntLt/Le/Gt/Ge` | `a < b`, `a ≤ b`, etc. |
+| Real variants | Same, using Z3 Real sort |
+
+**Example flow:**
+```
+Query: next(Y) with rule next(int_add(X, 1)) :- value(X) and fact value(5)
+1. Back-chain: unify Y with int_add(X, 1), add value(X) as goal
+2. Unify X=5 from fact
+3. int_add(5, 1, Y) added to constraint store
+4. No more goals → solve constraints
+5. Z3 solves: 5 + 1 = Y → Y = 6
+6. Solution returned with Y=6
+```
 
 ---
 

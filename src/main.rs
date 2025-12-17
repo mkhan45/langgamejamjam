@@ -12,7 +12,7 @@ use ast::compile::Compiler;
 
 use ast::Module;
 use ir::Program;
-use solver::{format_solution, Solver, SearchStrategy};
+use solver::{format_solution, Solver, SearchStrategy, SearchQueue};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn parse_module(input: *const c_char) -> *mut Module {
@@ -59,6 +59,9 @@ pub struct Frontend {
     pub program: Program,
     pub var_map: std::collections::HashMap<String, ir::TermId>,
     pub strategy: SearchStrategy,
+    pub max_steps: usize,
+    pending_queue: Option<SearchQueue>,
+    pending_query_vars: Vec<(String, ir::TermId)>,
 }
 
 impl Frontend {
@@ -67,6 +70,9 @@ impl Frontend {
             program: Program::default(),
             var_map: std::collections::HashMap::new(),
             strategy: SearchStrategy::default(),
+            max_steps: 10_000,
+            pending_queue: None,
+            pending_query_vars: Vec::new(),
         }
     }
 
@@ -89,6 +95,10 @@ impl Frontend {
     }
 
     pub fn query_with_limit(&mut self, query_str: &str, limit: usize) -> Result<Vec<String>, String> {
+        self.query_with_limit_and_steps(query_str, limit, self.max_steps)
+    }
+
+    pub fn query_with_limit_and_steps(&mut self, query_str: &str, limit: usize, max_steps: usize) -> Result<Vec<String>, String> {
         let term_result = parser::parse_term(query_str.into()).finish();
         let term = match term_result {
             Ok((_, term)) => term,
@@ -99,12 +109,74 @@ impl Frontend {
             .compile_query(&term);
 
         let mut solver = Solver::new(&mut self.program);
-        let solutions: Vec<_> = solver.query_with_strategy(goal, self.strategy).with_limit(limit).collect();
+        let solutions: Vec<_> = solver.query_with_strategy(goal, self.strategy)
+            .with_limit(limit)
+            .with_max_steps(max_steps)
+            .collect();
 
         Ok(solutions
             .iter()
             .map(|s| format_solution(&query_vars, s, solver.program))
             .collect())
+    }
+
+    pub fn query_start(&mut self, query_str: &str) -> Result<Option<String>, String> {
+        let term_result = parser::parse_term(query_str.into()).finish();
+        let term = match term_result {
+            Ok((_, term)) => term,
+            Err(e) => return Err(format!("Query parse error: {:?}", e)),
+        };
+
+        let (goal, query_vars) = Compiler::with_var_map(&mut self.program, self.var_map.clone())
+            .compile_query(&term);
+
+        self.pending_query_vars = query_vars;
+
+        let mut solver = Solver::new(&mut self.program);
+        let queue = solver.init_query(goal, self.strategy);
+        let (solution, remaining_queue) = solver.step_until_solution(queue, self.max_steps);
+
+        self.pending_queue = Some(remaining_queue);
+
+        match solution {
+            Some(state) => Ok(Some(format_solution(&self.pending_query_vars, &state, &self.program))),
+            None => {
+                if self.pending_queue.as_ref().map_or(true, |q| q.is_empty()) {
+                    self.pending_queue = None;
+                    Ok(None)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    pub fn query_next(&mut self) -> Option<String> {
+        let queue = self.pending_queue.take()?;
+
+        if queue.is_empty() {
+            return None;
+        }
+
+        let mut solver = Solver::new(&mut self.program);
+        let (solution, remaining_queue) = solver.step_until_solution(queue, self.max_steps);
+
+        if remaining_queue.is_empty() {
+            self.pending_queue = None;
+        } else {
+            self.pending_queue = Some(remaining_queue);
+        }
+
+        solution.map(|state| format_solution(&self.pending_query_vars, &state, &self.program))
+    }
+
+    pub fn has_more_solutions(&self) -> bool {
+        self.pending_queue.as_ref().map_or(false, |q| !q.is_empty())
+    }
+
+    pub fn query_stop(&mut self) {
+        self.pending_queue = None;
+        self.pending_query_vars.clear();
     }
 }
 
@@ -146,6 +218,20 @@ pub unsafe extern "C" fn frontend_get_strategy(frontend: *mut Frontend) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_set_max_steps(frontend: *mut Frontend, max_steps: i32) {
+    unsafe {
+        (*frontend).max_steps = max_steps as usize;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_get_max_steps(frontend: *mut Frontend) -> i32 {
+    unsafe {
+        (*frontend).max_steps as i32
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn frontend_load(frontend: *mut Frontend, source: *const c_char) -> i32 {
     unsafe {
         let source_str = CStr::from_ptr(source).to_str().unwrap_or("");
@@ -172,6 +258,46 @@ pub unsafe extern "C" fn frontend_query(frontend: *mut Frontend, query: *const c
             Err(e) => format!("Error: {}", e),
         };
         CString::new(output).unwrap().into_raw()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_query_start(frontend: *mut Frontend, query: *const c_char) -> *mut c_char {
+    unsafe {
+        let query_str = CStr::from_ptr(query).to_str().unwrap_or("");
+        let result = (*frontend).query_start(query_str);
+        let output = match result {
+            Ok(Some(solution)) => solution,
+            Ok(None) => "no".to_string(),
+            Err(e) => format!("Error: {}", e),
+        };
+        CString::new(output).unwrap().into_raw()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_query_next(frontend: *mut Frontend) -> *mut c_char {
+    unsafe {
+        let result = (*frontend).query_next();
+        let output = match result {
+            Some(solution) => solution,
+            None => "no".to_string(),
+        };
+        CString::new(output).unwrap().into_raw()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_has_more(frontend: *mut Frontend) -> i32 {
+    unsafe {
+        if (*frontend).has_more_solutions() { 1 } else { 0 }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_query_stop(frontend: *mut Frontend) {
+    unsafe {
+        (*frontend).query_stop();
     }
 }
 
@@ -297,5 +423,43 @@ End Global
         eprintln!("Query result: {:?}", result);
         assert!(!result.is_empty(), "Expected at least one solution");
         assert!(result[0].contains("pair"), "Expected L to be bound to pair(1, 2), got: {:?}", result);
+    }
+
+    #[test]
+    fn test_incremental_query() {
+        let mut frontend = Frontend::new();
+        frontend.load(r#"Begin Facts:
+    true()
+End Facts
+
+Begin Global:
+    Rule Base:
+    true()
+    ------
+    num(1)
+
+    Rule Step:
+    num(X)
+    ------
+    num(s(X))
+End Global
+"#).unwrap();
+
+        frontend.max_steps = 1000;
+
+        let first = frontend.query_start("num(X)").unwrap();
+        assert!(first.is_some(), "Should find first solution");
+        eprintln!("First: {:?}", first);
+
+        let second = frontend.query_next();
+        assert!(second.is_some(), "Should find second solution");
+        eprintln!("Second: {:?}", second);
+
+        let third = frontend.query_next();
+        assert!(third.is_some(), "Should find third solution");
+        eprintln!("Third: {:?}", third);
+
+        frontend.query_stop();
+        assert!(!frontend.has_more_solutions(), "No more after stop");
     }
 }

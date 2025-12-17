@@ -123,6 +123,74 @@ impl ConstraintStore {
         }
     }
 
+    pub fn is_ground_constraint(c: &ArithConstraint, subst: &Subst, program: &Program) -> bool {
+        let terms = match c {
+            ArithConstraint::IntEq(a, b)
+            | ArithConstraint::IntNeq(a, b)
+            | ArithConstraint::IntLt(a, b)
+            | ArithConstraint::IntLe(a, b)
+            | ArithConstraint::IntGt(a, b)
+            | ArithConstraint::IntGe(a, b)
+            | ArithConstraint::RealEq(a, b)
+            | ArithConstraint::RealNeq(a, b)
+            | ArithConstraint::RealLt(a, b)
+            | ArithConstraint::RealLe(a, b)
+            | ArithConstraint::RealGt(a, b)
+            | ArithConstraint::RealGe(a, b) => vec![*a, *b],
+            ArithConstraint::IntAdd(a, b, c)
+            | ArithConstraint::IntSub(a, b, c)
+            | ArithConstraint::IntMul(a, b, c)
+            | ArithConstraint::IntDiv(a, b, c)
+            | ArithConstraint::RealAdd(a, b, c)
+            | ArithConstraint::RealSub(a, b, c)
+            | ArithConstraint::RealMul(a, b, c)
+            | ArithConstraint::RealDiv(a, b, c) => vec![*a, *b, *c],
+        };
+        terms.iter().all(|t| {
+            let walked = subst.walk(*t, &program.terms);
+            !matches!(program.terms.get(walked), Term::Var(_))
+        })
+    }
+
+    pub fn check_ground_constraints(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> bool {
+        let ground: Vec<_> = self
+            .constraints
+            .iter()
+            .filter(|c| Self::is_ground_constraint(c, subst, program))
+            .cloned()
+            .collect();
+
+        if ground.is_empty() {
+            return true;
+        }
+
+        let ground_store = ConstraintStore {
+            constraints: ground.into_iter().collect(),
+        };
+        ground_store.solve(subst, program, z3_solver).is_some()
+    }
+
+    pub fn try_solve_and_propagate(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<(Subst, ConstraintStore)> {
+        let (ground, non_ground): (Vec<_>, Vec<_>) = self.iter()
+            .cloned()
+            .partition(|c| Self::is_ground_constraint(c, subst, program));
+        
+        let ground_store = ConstraintStore {
+            constraints: ground.into_iter().collect(),
+        };
+        
+        let new_subst = if ground_store.is_empty() {
+            subst.clone()
+        } else {
+            ground_store.solve_constraints(subst, program, z3_solver)?
+        };
+        
+        let remaining = non_ground.into_iter()
+            .fold(ConstraintStore::new(), |acc, c| acc.add(c));
+        
+        Some((new_subst, remaining))
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &ArithConstraint> {
         self.constraints.iter()
     }
@@ -133,6 +201,126 @@ impl ConstraintStore {
 
     pub fn is_empty(&self) -> bool {
         self.constraints.is_empty()
+    }
+
+    pub fn solve(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<Subst> {
+        self.solve_constraints(subst, program, z3_solver)
+    }
+
+    fn solve_constraints(&self, subst: &Subst, program: &mut Program, z3_solver: &z3::Solver) -> Option<Subst> {
+        if self.is_empty() {
+            return Some(subst.clone());
+        }
+
+        z3_solver.reset();
+
+        let mut int_vars: std::collections::HashMap<VarId, z3::ast::Int> =
+            std::collections::HashMap::new();
+        let mut real_vars: std::collections::HashMap<VarId, z3::ast::Real> =
+            std::collections::HashMap::new();
+
+        for constraint in self.iter() {
+            let assertion = Self::constraint_to_z3(
+                constraint, subst, &program.terms, &mut int_vars, &mut real_vars
+            )?;
+            z3_solver.assert(&assertion);
+        }
+
+        match z3_solver.check() {
+            z3::SatResult::Sat => {
+                let model = z3_solver.get_model()?;
+                Some(Self::extract_bindings(&model, &int_vars, &real_vars, subst, program))
+            }
+            _ => None,
+        }
+    }
+
+    fn constraint_to_z3(
+        constraint: &ArithConstraint,
+        subst: &Subst,
+        terms: &Arena<Term>,
+        int_vars: &mut std::collections::HashMap<VarId, z3::ast::Int>,
+        real_vars: &mut std::collections::HashMap<VarId, z3::ast::Real>,
+    ) -> Option<z3::ast::Bool> {
+        let mut to_int = |t: TermId| -> Option<z3::ast::Int> {
+            let walked = subst.walk(t, terms);
+            terms.get(walked).to_z3_int(int_vars)
+        };
+
+        let mut to_real = |t: TermId| -> Option<z3::ast::Real> {
+            let walked = subst.walk(t, terms);
+            terms.get(walked).to_z3_real(real_vars)
+        };
+
+        match constraint {
+            ArithConstraint::IntAdd(a, b, c) => {
+                Some(z3::ast::Int::add(&[&to_int(*a)?, &to_int(*b)?]).eq(&to_int(*c)?))
+            }
+            ArithConstraint::IntSub(a, b, c) => {
+                Some(z3::ast::Int::sub(&[&to_int(*a)?, &to_int(*b)?]).eq(&to_int(*c)?))
+            }
+            ArithConstraint::IntMul(a, b, c) => {
+                Some(z3::ast::Int::mul(&[&to_int(*a)?, &to_int(*b)?]).eq(&to_int(*c)?))
+            }
+            ArithConstraint::IntDiv(a, b, c) => {
+                Some(to_int(*a)?.div(&to_int(*b)?).eq(&to_int(*c)?))
+            }
+            ArithConstraint::IntEq(a, b) => Some(to_int(*a)?.eq(&to_int(*b)?)),
+            ArithConstraint::IntNeq(a, b) => Some(to_int(*a)?.eq(&to_int(*b)?).not()),
+            ArithConstraint::IntLt(a, b) => Some(to_int(*a)?.lt(&to_int(*b)?)),
+            ArithConstraint::IntLe(a, b) => Some(to_int(*a)?.le(&to_int(*b)?)),
+            ArithConstraint::IntGt(a, b) => Some(to_int(*a)?.gt(&to_int(*b)?)),
+            ArithConstraint::IntGe(a, b) => Some(to_int(*a)?.ge(&to_int(*b)?)),
+            ArithConstraint::RealAdd(a, b, c) => {
+                Some(z3::ast::Real::add(&[&to_real(*a)?, &to_real(*b)?]).eq(&to_real(*c)?))
+            }
+            ArithConstraint::RealSub(a, b, c) => {
+                Some(z3::ast::Real::sub(&[&to_real(*a)?, &to_real(*b)?]).eq(&to_real(*c)?))
+            }
+            ArithConstraint::RealMul(a, b, c) => {
+                Some(z3::ast::Real::mul(&[&to_real(*a)?, &to_real(*b)?]).eq(&to_real(*c)?))
+            }
+            ArithConstraint::RealDiv(a, b, c) => {
+                Some(to_real(*a)?.div(&to_real(*b)?).eq(&to_real(*c)?))
+            }
+            ArithConstraint::RealEq(a, b) => Some(to_real(*a)?.eq(&to_real(*b)?)),
+            ArithConstraint::RealNeq(a, b) => Some(to_real(*a)?.eq(&to_real(*b)?).not()),
+            ArithConstraint::RealLt(a, b) => Some(to_real(*a)?.lt(&to_real(*b)?)),
+            ArithConstraint::RealLe(a, b) => Some(to_real(*a)?.le(&to_real(*b)?)),
+            ArithConstraint::RealGt(a, b) => Some(to_real(*a)?.gt(&to_real(*b)?)),
+            ArithConstraint::RealGe(a, b) => Some(to_real(*a)?.ge(&to_real(*b)?)),
+        }
+    }
+
+    fn extract_bindings(
+        model: &z3::Model,
+        int_vars: &std::collections::HashMap<VarId, z3::ast::Int>,
+        real_vars: &std::collections::HashMap<VarId, z3::ast::Real>,
+        subst: &Subst,
+        program: &mut Program,
+    ) -> Subst {
+        let mut new_subst = subst.clone();
+
+        for (var_id, z3_var) in int_vars {
+            if let Some(val) = model.eval(z3_var, true) {
+                if let Some(i) = val.as_i64() {
+                    let term_id = program.terms.alloc(Term::Int(i as i32));
+                    new_subst = new_subst.extend(*var_id, term_id);
+                }
+            }
+        }
+
+        for (var_id, z3_var) in real_vars {
+            if let Some(val) = model.eval(z3_var, true) {
+                if let Some((num, den)) = val.as_rational() {
+                    let f = num as f32 / den as f32;
+                    let term_id = program.terms.alloc(Term::Float(f));
+                    new_subst = new_subst.extend(*var_id, term_id);
+                }
+            }
+        }
+
+        new_subst
     }
 }
 
@@ -226,8 +414,8 @@ pub enum SearchStrategy {
 }
 
 pub struct SearchQueue {
-    queue: VecDeque<State>,
-    strategy: SearchStrategy,
+    pub queue: VecDeque<State>,
+    pub strategy: SearchStrategy,
 }
 
 impl SearchQueue {
@@ -278,6 +466,7 @@ impl Default for SearchQueue {
 pub struct Solver<'p> {
     pub program: &'p mut Program,
     fresh_counter: u32,
+    z3_solver: z3::Solver,
 }
 
 impl<'p> Solver<'p> {
@@ -285,6 +474,7 @@ impl<'p> Solver<'p> {
         Self {
             program,
             fresh_counter: 0,
+            z3_solver: z3::Solver::new(),
         }
     }
 
@@ -434,12 +624,32 @@ impl<'p> Solver<'p> {
                     }
                     RelKind::SMTInt => {
                         if let Some(constraint) = self.make_int_constraint(&rel_info.name, &args) {
-                            queue.push(state.with_constraint(constraint));
+                            let new_state = state.with_constraint(constraint);
+                            if let Some((solved_subst, remaining)) = new_state
+                                .constraints
+                                .try_solve_and_propagate(&new_state.subst, self.program, &self.z3_solver)
+                            {
+                                queue.push(State {
+                                    subst: solved_subst,
+                                    constraints: remaining,
+                                    goals: new_state.goals,
+                                });
+                            }
                         }
                     }
                     RelKind::SMTReal => {
                         if let Some(constraint) = self.make_real_constraint(&rel_info.name, &args) {
-                            queue.push(state.with_constraint(constraint));
+                            let new_state = state.with_constraint(constraint);
+                            if let Some((solved_subst, remaining)) = new_state
+                                .constraints
+                                .try_solve_and_propagate(&new_state.subst, self.program, &self.z3_solver)
+                            {
+                                queue.push(State {
+                                    subst: solved_subst,
+                                    constraints: remaining,
+                                    goals: new_state.goals,
+                                });
+                            }
                         }
                     }
                 }
@@ -546,7 +756,7 @@ impl<'p> Solver<'p> {
         SolutionIter {
             solver: self,
             queue,
-            max_steps: 1_000_000,
+            max_steps: 100_000,
             steps: 0,
             max_solutions: None,
             solutions_found: 0,
@@ -573,6 +783,52 @@ impl<'p> Solver<'p> {
             max_solutions: None,
             solutions_found: 0,
         }
+    }
+
+    pub fn step_until_solution(
+        &mut self,
+        mut queue: SearchQueue,
+        max_steps: usize,
+    ) -> (Option<State>, SearchQueue) {
+        let mut steps = 0;
+
+        while let Some(state) = queue.pop() {
+            steps += 1;
+            if steps > max_steps {
+                queue.push(state);
+                return (None, queue);
+            }
+
+            if let Some((goal, remaining)) = state.pop_goal() {
+                self.step_prop(remaining, goal, &mut queue);
+            } else {
+                if let Some(solved_subst) =
+                    state.constraints.solve(&state.subst, self.program, &self.z3_solver)
+                {
+                    return (
+                        Some(State {
+                            subst: solved_subst,
+                            constraints: ConstraintStore::new(),
+                            goals: Vector::new(),
+                        }),
+                        queue,
+                    );
+                }
+            }
+        }
+        (None, queue)
+    }
+
+    pub fn init_query(&mut self, goal: PropId, strategy: SearchStrategy) -> SearchQueue {
+        let mut state = State::new(goal);
+
+        for &fact_prop in &self.program.facts {
+            state = state.with_goal(fact_prop);
+        }
+
+        let mut queue = SearchQueue::with_strategy(strategy);
+        queue.push(state);
+        queue
     }
 }
 
@@ -616,8 +872,16 @@ impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
             if let Some((goal, remaining)) = state.pop_goal() {
                 self.solver.step_prop(remaining, goal, &mut self.queue);
             } else {
-                self.solutions_found += 1;
-                return Some(state);
+                if let Some(solved_subst) =
+                    state.constraints.solve(&state.subst, self.solver.program, &self.solver.z3_solver)
+                {
+                    self.solutions_found += 1;
+                    return Some(State {
+                        subst: solved_subst,
+                        constraints: ConstraintStore::new(),
+                        goals: Vector::new(),
+                    });
+                }
             }
         }
         None
@@ -885,13 +1149,14 @@ End Global
         for_each_strategy(|strategy| {
             let input = r#"Begin Facts:
     value(5)
+    true()
 End Facts
 
 Begin Global:
 Rule AddOne:
-    value(X)
-    --------
-    next(int_add(X, 1))
+    and(value(X), int_add(X, 1, Y))
+    -------------------------------
+    next(Y)
 End Global
 "#;
             let mut program = parse_and_compile(input);
@@ -919,11 +1184,116 @@ End Global
                 .collect();
 
             assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            // Constraints should be solved by Z3
             assert!(
-                !solutions[0].constraints.is_empty(),
-                "strategy: {:?}",
+                solutions[0].constraints.is_empty(),
+                "constraints should be solved, strategy: {:?}",
                 strategy
             );
+
+            let result = solutions[0].subst.walk(var_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Int(6) => {}
+                other => panic!(
+                    "Expected next(6) for int_add(5, 1, Y), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_z3_int_add_forward() {
+        for_each_strategy(|strategy| {
+            let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+            let mut program = parse_and_compile(input);
+
+            let int_add_rel = program
+                .rels
+                .iter()
+                .find(|(_, r)| r.name == "int_add")
+                .map(|(id, _)| id)
+                .unwrap();
+
+            let var_b = program.vars.alloc(crate::ir::Var {
+                name: "B".to_string(),
+            });
+            let var_b_term = program.terms.alloc(Term::Var(var_b));
+            let one_term = program.terms.alloc(Term::Int(1));
+
+            // int_add(1, 1, B) should give B = 2
+            let query_prop = program.props.alloc(Prop::App {
+                rel: int_add_rel,
+                args: vec![one_term, one_term, var_b_term],
+            });
+
+            let mut solver = Solver::new(&mut program);
+            let solutions: Vec<_> = solver
+                .query_with_strategy(query_prop, strategy)
+                .collect();
+
+            assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Int(2) => {}
+                other => panic!(
+                    "Expected B=2 for int_add(1, 1, B), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_z3_int_add_backward() {
+        for_each_strategy(|strategy| {
+            let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+            let mut program = parse_and_compile(input);
+
+            let int_add_rel = program
+                .rels
+                .iter()
+                .find(|(_, r)| r.name == "int_add")
+                .map(|(id, _)| id)
+                .unwrap();
+
+            let var_b = program.vars.alloc(crate::ir::Var {
+                name: "B".to_string(),
+            });
+            let var_b_term = program.terms.alloc(Term::Var(var_b));
+            let two_term = program.terms.alloc(Term::Int(2));
+            let five_term = program.terms.alloc(Term::Int(5));
+
+            // int_add(2, B, 5) should give B = 3
+            let query_prop = program.props.alloc(Prop::App {
+                rel: int_add_rel,
+                args: vec![two_term, var_b_term, five_term],
+            });
+
+            let mut solver = Solver::new(&mut program);
+            let solutions: Vec<_> = solver
+                .query_with_strategy(query_prop, strategy)
+                .collect();
+
+            assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Int(3) => {}
+                other => panic!(
+                    "Expected B=3 for int_add(2, B, 5), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
         });
     }
 
@@ -1008,5 +1378,320 @@ End Global
                 other => panic!("Expected Y=1, got {:?} (strategy: {:?})", other, strategy),
             }
         });
+    }
+
+    #[test]
+    fn test_z3_real_add_forward() {
+        for_each_strategy(|strategy| {
+            let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+            let mut program = parse_and_compile(input);
+
+            let real_add_rel = program
+                .rels
+                .iter()
+                .find(|(_, r)| r.name == "real_add")
+                .map(|(id, _)| id)
+                .unwrap();
+
+            let var_c = program.vars.alloc(crate::ir::Var {
+                name: "C".to_string(),
+            });
+            let var_c_term = program.terms.alloc(Term::Var(var_c));
+            let one_term = program.terms.alloc(Term::Float(1.5));
+            let two_term = program.terms.alloc(Term::Float(2.5));
+
+            // real_add(1.5, 2.5, C) should give C = 4.0
+            let query_prop = program.props.alloc(Prop::App {
+                rel: real_add_rel,
+                args: vec![one_term, two_term, var_c_term],
+            });
+
+            let mut solver = Solver::new(&mut program);
+            let solutions: Vec<_> = solver
+                .query_with_strategy(query_prop, strategy)
+                .collect();
+
+            assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            let result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Float(f) if (*f - 4.0).abs() < 0.0001 => {}
+                other => panic!(
+                    "Expected C=4.0 for real_add(1.5, 2.5, C), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_z3_real_add_backward() {
+        for_each_strategy(|strategy| {
+            let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+            let mut program = parse_and_compile(input);
+
+            let real_add_rel = program
+                .rels
+                .iter()
+                .find(|(_, r)| r.name == "real_add")
+                .map(|(id, _)| id)
+                .unwrap();
+
+            let var_b = program.vars.alloc(crate::ir::Var {
+                name: "B".to_string(),
+            });
+            let var_b_term = program.terms.alloc(Term::Var(var_b));
+            let two_term = program.terms.alloc(Term::Float(2.0));
+            let five_term = program.terms.alloc(Term::Float(5.0));
+
+            // real_add(2.0, B, 5.0) should give B = 3.0
+            let query_prop = program.props.alloc(Prop::App {
+                rel: real_add_rel,
+                args: vec![two_term, var_b_term, five_term],
+            });
+
+            let mut solver = Solver::new(&mut program);
+            let solutions: Vec<_> = solver
+                .query_with_strategy(query_prop, strategy)
+                .collect();
+
+            assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Float(f) if (*f - 3.0).abs() < 0.0001 => {}
+                other => panic!(
+                    "Expected B=3.0 for real_add(2.0, B, 5.0), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_z3_real_div() {
+        for_each_strategy(|strategy| {
+            let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+"#;
+            let mut program = parse_and_compile(input);
+
+            let real_div_rel = program
+                .rels
+                .iter()
+                .find(|(_, r)| r.name == "real_div")
+                .map(|(id, _)| id)
+                .unwrap();
+
+            let var_c = program.vars.alloc(crate::ir::Var {
+                name: "C".to_string(),
+            });
+            let var_c_term = program.terms.alloc(Term::Var(var_c));
+            let ten_term = program.terms.alloc(Term::Float(10.0));
+            let four_term = program.terms.alloc(Term::Float(4.0));
+
+            // real_div(10.0, 4.0, C) should give C = 2.5
+            let query_prop = program.props.alloc(Prop::App {
+                rel: real_div_rel,
+                args: vec![ten_term, four_term, var_c_term],
+            });
+
+            let mut solver = Solver::new(&mut program);
+            let solutions: Vec<_> = solver
+                .query_with_strategy(query_prop, strategy)
+                .collect();
+
+            assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+            let result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+            match solver.program.terms.get(result) {
+                Term::Float(f) if (*f - 2.5).abs() < 0.0001 => {}
+                other => panic!(
+                    "Expected C=2.5 for real_div(10.0, 4.0, C), got {:?} (strategy: {:?})",
+                    other, strategy
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_eager_constraint_pruning() {
+        let input = std::fs::read_to_string("sample/inventory.l")
+            .expect("Failed to read sample/inventory.l");
+        let mut program = parse_and_compile(&input);
+
+        let cartcost_rel = program
+            .rels
+            .iter()
+            .find(|(_, r)| r.name == "cartCost")
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let var_c = program.vars.alloc(crate::ir::Var {
+            name: "C".to_string(),
+        });
+        let var_c_term = program.terms.alloc(Term::Var(var_c));
+        let var_a = program.vars.alloc(crate::ir::Var {
+            name: "A".to_string(),
+        });
+        let var_a_term = program.terms.alloc(Term::Var(var_a));
+        let zero_term = program.terms.alloc(Term::Int(0));
+
+        // cartCost(C, A, 0) - with MaxSize=0, only empty cart should match
+        let query_prop = program.props.alloc(Prop::App {
+            rel: cartcost_rel,
+            args: vec![var_c_term, var_a_term, zero_term],
+        });
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver
+            .query(query_prop)
+            .with_limit(5)
+            .with_max_steps(1000)
+            .collect();
+
+        assert_eq!(solutions.len(), 1, "Should find exactly one solution (empty cart)");
+        
+        let cart_result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+        match solver.program.terms.get(cart_result) {
+            Term::Atom(s) => {
+                let name = solver.program.symbols.get(*s);
+                assert_eq!(name, "nil", "Cart should be nil");
+            }
+            other => panic!("Expected nil cart, got {:?}", other),
+        }
+
+        let cost_result = solutions[0].subst.walk(var_a_term, &solver.program.terms);
+        match solver.program.terms.get(cost_result) {
+            Term::Int(0) => {}
+            other => panic!("Expected cost 0, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cartcost_with_items() {
+        let input = std::fs::read_to_string("sample/inventory.l")
+            .expect("Failed to read sample/inventory.l");
+        let mut program = parse_and_compile(&input);
+
+        let cartcost_rel = program
+            .rels
+            .iter()
+            .find(|(_, r)| r.name == "cartCost")
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let var_c = program.vars.alloc(crate::ir::Var {
+            name: "C".to_string(),
+        });
+        let var_c_term = program.terms.alloc(Term::Var(var_c));
+        let var_t = program.vars.alloc(crate::ir::Var {
+            name: "T".to_string(),
+        });
+        let var_t_term = program.terms.alloc(Term::Var(var_t));
+        let two_term = program.terms.alloc(Term::Int(2));
+
+        // cartCost(C, T, 2) - find carts with up to 2 items
+        let query_prop = program.props.alloc(Prop::App {
+            rel: cartcost_rel,
+            args: vec![var_c_term, var_t_term, two_term],
+        });
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver
+            .query(query_prop)
+            .with_limit(10)
+            .collect();
+
+        // Should find: nil(0), apple(10), banana(5), apple+apple(20), apple+banana(15), banana+apple(15), banana+banana(10)
+        assert!(solutions.len() >= 5, "Should find multiple cart combinations, got {}", solutions.len());
+    }
+
+    #[test]
+    fn test_cartcost_specific_total() {
+        let input = std::fs::read_to_string("sample/inventory.l")
+            .expect("Failed to read sample/inventory.l");
+        let mut program = parse_and_compile(&input);
+
+        let cartcost_rel = program
+            .rels
+            .iter()
+            .find(|(_, r)| r.name == "cartCost")
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let var_c = program.vars.alloc(crate::ir::Var {
+            name: "C".to_string(),
+        });
+        let var_c_term = program.terms.alloc(Term::Var(var_c));
+        let ten_term = program.terms.alloc(Term::Int(10));
+        let one_term = program.terms.alloc(Term::Int(1));
+
+        // cartCost(C, 10, 1) - find single-item carts costing exactly 10
+        let query_prop = program.props.alloc(Prop::App {
+            rel: cartcost_rel,
+            args: vec![var_c_term, ten_term, one_term],
+        });
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver
+            .query(query_prop)
+            .with_limit(5)
+            .with_max_steps(1000)
+            .collect();
+
+        // Should find cons(apple, nil) since apple costs 10
+        assert_eq!(solutions.len(), 1, "Should find exactly one cart costing 10 with max 1 item");
+    }
+
+    #[test]
+    fn test_cartcost_unbound_maxsize() {
+        // Regression test: cartCost(A, 25, B) should work even when B (MaxSize) is unbound
+        let input = std::fs::read_to_string("sample/inventory.l")
+            .expect("Failed to read sample/inventory.l");
+        let mut program = parse_and_compile(&input);
+
+        let cartcost_rel = program
+            .rels
+            .iter()
+            .find(|(_, r)| r.name == "cartCost")
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let var_a = program.vars.alloc(crate::ir::Var {
+            name: "A".to_string(),
+        });
+        let var_a_term = program.terms.alloc(Term::Var(var_a));
+        let var_b = program.vars.alloc(crate::ir::Var {
+            name: "B".to_string(),
+        });
+        let var_b_term = program.terms.alloc(Term::Var(var_b));
+        let twenty_five_term = program.terms.alloc(Term::Int(25));
+
+        // cartCost(A, 25, B) - find carts costing 25 with any max size
+        let query_prop = program.props.alloc(Prop::App {
+            rel: cartcost_rel,
+            args: vec![var_a_term, twenty_five_term, var_b_term],
+        });
+
+        let mut solver = Solver::new(&mut program);
+        let solutions: Vec<_> = solver
+            .query(query_prop)
+            .with_limit(5)
+            .with_max_steps(5000)
+            .collect();
+
+        // Should find at least one solution (e.g., cons(banana, cons(banana, cons(banana, cons(apple, nil)))) = 5+5+5+10 = 25)
+        assert!(!solutions.is_empty(), "Should find carts costing 25 with unbound MaxSize");
     }
 }

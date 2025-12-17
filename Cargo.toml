@@ -13,6 +13,12 @@ im = "15.1"
 opt-level = 3
 strip = true
 
+[profile.dev.package.z3]
+opt-level = 3
+
+[profile.dev.package.z3-sys]
+opt-level = 3
+
 [profile.release.package.z3]
 opt-level = 3
 
