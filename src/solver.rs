@@ -3,7 +3,7 @@ pub mod ir;
 
 pub use engine::{
     format_solution, reify_term, ArithConstraint, ConstraintStore, SearchQueue, SearchStrategy,
-    SolutionIter, Solver, State, Subst,
+    Solver, State, Subst, SolutionSet, TerminationReason,
 };
 
 #[path = "../solver/state_tests.rs"]

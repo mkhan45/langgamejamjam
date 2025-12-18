@@ -120,6 +120,18 @@ pub unsafe extern "C" fn frontend_has_more(frontend: *mut Frontend) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_query_reason(frontend: *mut Frontend) -> i32 {
+    unsafe {
+        match (*frontend).last_query_reason {
+            Some(crate::solver::TerminationReason::LimitReached) => 0,
+            Some(crate::solver::TerminationReason::SearchExhausted) => 1,
+            Some(crate::solver::TerminationReason::MaxStepsReached) => 2,
+            None => -1,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn frontend_query_stop(frontend: *mut Frontend) {
     unsafe {
         (*frontend).query_stop();

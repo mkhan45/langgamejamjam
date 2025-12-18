@@ -301,14 +301,36 @@ struct Frontend {
     strategy: SearchStrategy,          // BFS (default) or DFS
     max_steps: usize,
 }
+
+struct SolutionSet {
+    solutions: Vec<State>,
+    reason: TerminationReason,
+}
+
+enum TerminationReason {
+    LimitReached,      // Hit solution limit
+    SearchExhausted,   // No more proof search branches
+    MaxStepsReached,   // Hit step limit during search
+}
 ```
 
 **Methods:**
-- `load(source)` — parse and compile
-- `query(query_str)` — batch query (up to 10 solutions)
+- `load(source)` → `Result<(), String>` — parse and compile
+- `query_batch(query_str, limit)` → `Result<Vec<String>, String>` — batch query with solution limit
 - `query_start(query_str)` / `query_next()` — incremental query
-- `run_stage(index)` / `run_stage_by_name(name)` — execute state transitions
-- `get_state_var(name)` — get current state value
+- `has_more_solutions()` — check if more results available
+- `query_stop()` — abandon current incremental query
+- `run_stage(index)` / `run_stage_by_name(name)` → `Result<(), String>` — execute state transitions
+- `get_state_var(name)` → `Option<String>` — get current state value
+- `state_vars()` → `Vec<(String, String)>` — get all state variables
+
+**Solution Collection:**
+`collect_solutions(goal, strategy, limit, max_steps) → SolutionSet` collects up to `limit` solutions. The `reason` field distinguishes between:
+- **LimitReached**: Requested `limit` solutions found; may have more.
+- **SearchExhausted**: No more proof branches; found all solutions.
+- **MaxStepsReached**: Step limit hit; result inconclusive.
+
+Critical for state constraint determinism checking: when requesting 2 solutions, `LimitReached` proves non-determinism (≥2 solutions exist), while `MaxStepsReached` is inconclusive.
 
 **FFI**: All exposed via C FFI for JS/WASM. `main()` is empty.
 
@@ -319,3 +341,7 @@ struct Frontend {
 - Avoid using `mod.rs`. Instead, for a module `example`, use an `example.rs` file and an `example/` directory.
 - Prefer higher-level conceptual reasoning to concrete code reasoning. Motivate code changes with a mental model of the problem when applicable.
 - Remember that we use immutable data structures in the solver
+- Compiling is sometimes extremely expensive.
+    - For tests, never use --release.
+    - Agents probably shouldn't use ./build-web.sh, but if so it should always be `./build-web.sh release`
+    - Never do a clean build or run cargo clean.

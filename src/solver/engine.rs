@@ -1,8 +1,58 @@
 use std::collections::VecDeque;
 
+#[cfg(feature = "profile")]
+use std::cell::RefCell;
+
 use im::{HashMap, Vector};
 
 use crate::solver::ir::{Arena, Clause, Program, Prop, PropId, RelId, RelKind, Term, TermId, Var, VarId};
+
+#[cfg(feature = "profile")]
+thread_local! {
+    static PROFILE_STATS: RefCell<ProfileStats> = RefCell::new(ProfileStats::new());
+}
+
+#[cfg(feature = "profile")]
+#[derive(Debug, Default)]
+struct ProfileStats {
+    walk_calls: usize,
+    walk_chains: usize,
+    unify_calls: usize,
+    unify_failures: usize,
+}
+
+#[cfg(feature = "profile")]
+impl ProfileStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn record_walk(&mut self, depth: usize) {
+        self.walk_calls += 1;
+        if depth > 1 {
+            self.walk_chains += 1;
+        }
+    }
+
+    fn record_unify(&mut self, success: bool) {
+        self.unify_calls += 1;
+        if !success {
+            self.unify_failures += 1;
+        }
+    }
+}
+
+macro_rules! record_profile {
+    ($stats:ident => $body:expr) => {
+        #[cfg(feature = "profile")]
+        {
+            PROFILE_STATS.with(|_stats| {
+                let mut $stats = _stats.borrow_mut();
+                $body;
+            });
+        }
+    };
+}
 
 #[derive(Clone, Default)]
 pub struct Subst {
@@ -17,15 +67,25 @@ impl Subst {
     }
 
     pub fn walk(&self, t: TermId, terms: &Arena<Term>) -> TermId {
+        self.walk_impl(t, terms, 0)
+    }
+
+    fn walk_impl(&self, t: TermId, terms: &Arena<Term>, depth: usize) -> TermId {
         match terms.get(t) {
             Term::Var(v) => {
                 if let Some(&t2) = self.map.get(v) {
-                    self.walk(t2, terms)
+                    let result = self.walk_impl(t2, terms, depth + 1);
+                    record_profile!(stats => stats.record_walk(depth + 1));
+                    result
                 } else {
+                    record_profile!(stats => stats.record_walk(depth));
                     t
                 }
             }
-            _ => t,
+            _ => {
+                record_profile!(stats => stats.record_walk(depth));
+                t
+            }
         }
     }
 
@@ -44,13 +104,14 @@ impl Subst {
         let t2 = self.walk(t2, terms);
 
         if t1 == t2 {
+            record_profile!(stats => stats.record_unify(true));
             return Some(self.clone());
         }
 
         let term1 = terms.get(t1);
         let term2 = terms.get(t2);
 
-        match (term1, term2) {
+        let result = match (term1, term2) {
             (Term::Var(v1), _) => Some(self.extend(*v1, t2)),
             (_, Term::Var(v2)) => Some(self.extend(*v2, t1)),
             (Term::Atom(s1), Term::Atom(s2)) if s1 == s2 => Some(self.clone()),
@@ -60,7 +121,9 @@ impl Subst {
                 self.unify_args(a1, a2, terms)
             }
             _ => None,
-        }
+        };
+        record_profile!(stats => stats.record_unify(result.is_some()));
+        result
     }
 
     pub fn unify_args(
@@ -407,6 +470,25 @@ pub enum SearchStrategy {
     DFS,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminationReason {
+    LimitReached,
+    SearchExhausted,
+    MaxStepsReached,
+}
+
+#[derive(Clone)]
+pub struct SolutionSet {
+    pub solutions: Vec<State>,
+    pub reason: TerminationReason,
+}
+
+impl SolutionSet {
+    pub fn solutions(&self) -> &[State] {
+        &self.solutions
+    }
+}
+
 pub struct SearchQueue {
     pub queue: VecDeque<State>,
     pub strategy: SearchStrategy,
@@ -747,55 +829,7 @@ impl<'p> Solver<'p> {
         }
     }
 
-    pub fn query(&mut self, goal: PropId) -> SolutionIter<'_, 'p> {
-        self.query_with_strategy(goal, SearchStrategy::default())
-    }
 
-    pub fn query_with_strategy(
-        &mut self,
-        goal: PropId,
-        strategy: SearchStrategy,
-    ) -> SolutionIter<'_, 'p> {
-        let mut state = State::new(goal);
-
-        for &fact_prop in &self.program.facts {
-            state = state.with_goal(fact_prop);
-        }
-
-        let mut queue = SearchQueue::with_strategy(strategy);
-        queue.push(state);
-
-        SolutionIter {
-            solver: self,
-            queue,
-            max_steps: 100_000,
-            steps: 0,
-            max_solutions: None,
-            solutions_found: 0,
-        }
-    }
-
-    pub fn query_from_state(&mut self, state: State) -> SolutionIter<'_, 'p> {
-        self.query_from_state_with_strategy(state, SearchStrategy::default())
-    }
-
-    pub fn query_from_state_with_strategy(
-        &mut self,
-        state: State,
-        strategy: SearchStrategy,
-    ) -> SolutionIter<'_, 'p> {
-        let mut queue = SearchQueue::with_strategy(strategy);
-        queue.push(state);
-
-        SolutionIter {
-            solver: self,
-            queue,
-            max_steps: 10000,
-            steps: 0,
-            max_solutions: None,
-            solutions_found: 0,
-        }
-    }
 
     pub fn step_until_solution(
         &mut self,
@@ -816,6 +850,10 @@ impl<'p> Solver<'p> {
             } else if let Some(solved_subst) =
                 state.constraints.solve_all(&state.subst, self.program, &self.z3_solver)
             {
+                #[cfg(feature = "profile")]
+                PROFILE_STATS.with(|stats| {
+                    dbg!(&*stats.borrow());
+                });
                 return (
                     Some(State {
                         subst: solved_subst,
@@ -840,61 +878,50 @@ impl<'p> Solver<'p> {
         queue.push(state);
         queue
     }
-}
 
-pub struct SolutionIter<'s, 'p> {
-    solver: &'s mut Solver<'p>,
-    queue: SearchQueue,
-    max_steps: usize,
-    steps: usize,
-    max_solutions: Option<usize>,
-    solutions_found: usize,
-}
+    /// Collect solutions from a query up to a given limit and step count.
+    /// Unifies the batch query API into a single canonical path.
+    pub fn collect_solutions(
+        &mut self,
+        goal: PropId,
+        strategy: SearchStrategy,
+        limit: usize,
+        max_steps: usize,
+    ) -> SolutionSet {
+        let mut queue = self.init_query(goal, strategy);
+        let mut solutions = Vec::new();
 
-impl<'s, 'p> SolutionIter<'s, 'p> {
-    pub fn with_max_steps(mut self, max_steps: usize) -> Self {
-        self.max_steps = max_steps;
-        self
-    }
-
-    pub fn with_limit(mut self, limit: usize) -> Self {
-        self.max_solutions = Some(limit);
-        self
-    }
-}
-
-impl<'s, 'p> Iterator for SolutionIter<'s, 'p> {
-    type Item = State;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(max) = self.max_solutions
-            && self.solutions_found >= max
-        {
-            return None;
-        }
-
-        while let Some(state) = self.queue.pop() {
-            self.steps += 1;
-            if self.steps > self.max_steps {
-                return None;
+        loop {
+            if solutions.len() >= limit {
+                return SolutionSet {
+                    solutions,
+                    reason: TerminationReason::LimitReached,
+                };
             }
 
-            if let Some((goal, remaining)) = state.pop_goal() {
-                self.solver.step_prop(remaining, goal, &mut self.queue);
-            } else if let Some(solved_subst) =
-                state.constraints.solve_all(&state.subst, self.solver.program, &self.solver.z3_solver)
-            {
-                self.solutions_found += 1;
-                return Some(State {
-                    subst: solved_subst,
-                    constraints: ConstraintStore::new(),
-                    goals: Vector::new(),
-                });
+            let (solution, remaining_queue) = self.step_until_solution(queue, max_steps);
+            
+            let hit_max_steps = solution.is_none() && !remaining_queue.is_empty();
+            queue = remaining_queue;
+
+            if let Some(state) = solution {
+                solutions.push(state);
+            } else if hit_max_steps {
+                return SolutionSet {
+                    solutions,
+                    reason: TerminationReason::MaxStepsReached,
+                };
+            } else {
+                return SolutionSet {
+                    solutions,
+                    reason: TerminationReason::SearchExhausted,
+                };
             }
         }
-        None
     }
 }
+
+
 
 pub fn reify_term(term_id: TermId, subst: &Subst, program: &Program) -> String {
     let walked = subst.walk(term_id, &program.terms);

@@ -24,3 +24,6 @@ opt-level = 3
 
 [profile.release.package.z3-sys]
 opt-level = 3
+
+[features]
+profile = []

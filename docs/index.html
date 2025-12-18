@@ -102,6 +102,7 @@ End Stage Physics
             let frontend_query_start = Module.cwrap('frontend_query_start', 'string', ['number', 'string']);
             let frontend_query_next = Module.cwrap('frontend_query_next', 'string', ['number']);
             let frontend_has_more = Module.cwrap('frontend_has_more', 'number', ['number']);
+            let frontend_query_reason = Module.cwrap('frontend_query_reason', 'number', ['number']);
             let frontend_query_stop = Module.cwrap('frontend_query_stop', null, ['number']);
             let frontend_run_stage = Module.cwrap('frontend_run_stage', 'number', ['number', 'number']);
             let frontend_state_var_count = Module.cwrap('frontend_state_var_count', 'number', ['number']);
@@ -122,6 +123,17 @@ End Stage Physics
 
             let currentModule = null;
             let frontend = create_frontend();
+            let queryStartTime = null;
+
+            function reasonToString(reasonCode) {
+                switch (reasonCode) {
+                    case 0: return 'limit reached (more solutions may exist)';
+                    case 1: return 'search exhausted (no more solutions)';
+                    case 2: return 'max steps reached (result inconclusive)';
+                    case -1: return 'no query executed';
+                    default: return 'unknown';
+                }
+            }
 
             function updateStateVars() {
                 const count = frontend_state_var_count(frontend);
@@ -205,14 +217,19 @@ End Stage Physics
                 const queryStr = queryInput.value;
                 if (!queryStr) return;
                 frontend_query_stop(frontend);
+                queryStartTime = performance.now();
                 const result = frontend_query_start(frontend, queryStr);
-                out.innerText += '\n\nQuery: ' + queryStr + '\n' + result;
+                const elapsed = (performance.now() - queryStartTime).toFixed(2);
+                const reasonCode = frontend_query_reason(frontend);
+                const reason = reasonToString(reasonCode);
+                out.innerText += '\n\nQuery: ' + queryStr + '\n' + result + '\n(Time: ' + elapsed + 'ms, Reason: ' + reason + ')';
                 updateButtons();
             };
 
             nextBtn.onclick = () => {
                 const result = frontend_query_next(frontend);
-                out.innerText += '\n' + result;
+                const elapsed = (performance.now() - queryStartTime).toFixed(2);
+                out.innerText += '\n' + result + '\n(Time: ' + elapsed + 'ms)';
                 updateButtons();
             };
 

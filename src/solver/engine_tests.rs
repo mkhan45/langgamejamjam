@@ -55,12 +55,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let solution = &solutions[0];
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let solution = &solution_set.solutions()[0];
 
         let x_val = solution.subst.walk(x_term, &solver.program.terms);
         let y_val = solution.subst.walk(y_term, &solver.program.terms);
@@ -110,12 +108,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let solution = &solutions[0];
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let solution = &solution_set.solutions()[0];
 
         let result = solution.subst.walk(var_term, &solver.program.terms);
         match solver.program.terms.get(result) {
@@ -157,11 +153,9 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 3, "strategy: {:?}", strategy);
+        assert_eq!(solution_set.solutions().len(), 3, "strategy: {:?}", strategy);
     });
 }
 
@@ -203,11 +197,9 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
     });
 }
 
@@ -246,18 +238,16 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
         assert!(
-            solutions[0].constraints.is_empty(),
+            solution_set.solutions()[0].constraints.is_empty(),
             "constraints should be solved, strategy: {:?}",
             strategy
         );
 
-        let result = solutions[0].subst.walk(var_term, &solver.program.terms);
+        let result = solution_set.solutions()[0].subst.walk(var_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Int(6) => {}
             other => panic!(
@@ -299,12 +289,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let result = solution_set.solutions()[0].subst.walk(var_b_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Int(2) => {}
             other => panic!(
@@ -347,12 +335,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let result = solution_set.solutions()[0].subst.walk(var_b_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Int(3) => {}
             other => panic!(
@@ -386,12 +372,10 @@ End Global
         let query_prop = program.props.alloc(Prop::And(eq1, eq2));
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
         assert_eq!(
-            solutions.len(),
+            solution_set.solutions().len(),
             0,
             "and(eq(X, 1), eq(X, 2)) should fail (strategy: {:?})",
             strategy
@@ -425,18 +409,16 @@ End Global
         let query_prop = program.props.alloc(Prop::And(eq1, eq2));
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
         assert_eq!(
-            solutions.len(),
+            solution_set.solutions().len(),
             1,
             "and(eq(X, 1), eq(X, Y)) should succeed with Y=1 (strategy: {:?})",
             strategy
         );
 
-        let y_val = solutions[0]
+        let y_val = solution_set.solutions()[0]
             .subst
             .walk(var_y_term, &solver.program.terms);
         match solver.program.terms.get(y_val) {
@@ -478,12 +460,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let result = solution_set.solutions()[0].subst.walk(var_c_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Float(f) if (*f - 4.0).abs() < 0.0001 => {}
             other => panic!(
@@ -526,12 +506,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let result = solutions[0].subst.walk(var_b_term, &solver.program.terms);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let result = solution_set.solutions()[0].subst.walk(var_b_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Float(f) if (*f - 3.0).abs() < 0.0001 => {}
             other => panic!(
@@ -574,12 +552,10 @@ End Global
         });
 
         let mut solver = Solver::new(&mut program);
-        let solutions: Vec<_> = solver
-            .query_with_strategy(query_prop, strategy)
-            .collect();
+        let solution_set = solver.collect_solutions(query_prop, strategy, usize::MAX, 100_000);
 
-        assert_eq!(solutions.len(), 1, "strategy: {:?}", strategy);
-        let result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+        assert_eq!(solution_set.solutions().len(), 1, "strategy: {:?}", strategy);
+        let result = solution_set.solutions()[0].subst.walk(var_c_term, &solver.program.terms);
         match solver.program.terms.get(result) {
             Term::Float(f) if (*f - 2.5).abs() < 0.0001 => {}
             other => panic!(
@@ -620,15 +596,11 @@ fn test_eager_constraint_pruning() {
     });
 
     let mut solver = Solver::new(&mut program);
-    let solutions: Vec<_> = solver
-        .query(query_prop)
-        .with_limit(5)
-        .with_max_steps(1000)
-        .collect();
+    let solution_set = solver.collect_solutions(query_prop, SearchStrategy::default(), 5, 1000);
 
-    assert_eq!(solutions.len(), 1, "Should find exactly one solution (empty cart)");
+    assert_eq!(solution_set.solutions().len(), 1, "Should find exactly one solution (empty cart)");
     
-    let cart_result = solutions[0].subst.walk(var_c_term, &solver.program.terms);
+    let cart_result = solution_set.solutions()[0].subst.walk(var_c_term, &solver.program.terms);
     match solver.program.terms.get(cart_result) {
         Term::Atom(s) => {
             let name = solver.program.symbols.get(*s);
@@ -637,7 +609,7 @@ fn test_eager_constraint_pruning() {
         other => panic!("Expected nil cart, got {:?}", other),
     }
 
-    let cost_result = solutions[0].subst.walk(var_a_term, &solver.program.terms);
+    let cost_result = solution_set.solutions()[0].subst.walk(var_a_term, &solver.program.terms);
     match solver.program.terms.get(cost_result) {
         Term::Int(0) => {}
         other => panic!("Expected cost 0, got {:?}", other),
@@ -674,12 +646,9 @@ fn test_cartcost_with_items() {
     });
 
     let mut solver = Solver::new(&mut program);
-    let solutions: Vec<_> = solver
-        .query(query_prop)
-        .with_limit(10)
-        .collect();
+    let solution_set = solver.collect_solutions(query_prop, SearchStrategy::default(), 10, 100_000);
 
-    assert!(solutions.len() >= 5, "Should find multiple cart combinations, got {}", solutions.len());
+    assert!(solution_set.solutions().len() >= 5, "Should find multiple cart combinations, got {}", solution_set.solutions().len());
 }
 
 #[test]
@@ -709,13 +678,9 @@ fn test_cartcost_specific_total() {
     });
 
     let mut solver = Solver::new(&mut program);
-    let solutions: Vec<_> = solver
-        .query(query_prop)
-        .with_limit(5)
-        .with_max_steps(1000)
-        .collect();
+    let solution_set = solver.collect_solutions(query_prop, SearchStrategy::default(), 5, 1000);
 
-    assert_eq!(solutions.len(), 1, "Should find exactly one cart costing 10 with max 1 item");
+    assert_eq!(solution_set.solutions().len(), 1, "Should find exactly one cart costing 10 with max 1 item");
 }
 
 #[test]
@@ -749,11 +714,7 @@ fn test_cartcost_unbound_maxsize() {
     });
 
     let mut solver = Solver::new(&mut program);
-    let solutions: Vec<_> = solver
-        .query(query_prop)
-        .with_limit(5)
-        .with_max_steps(5000)
-        .collect();
+    let solution_set = solver.collect_solutions(query_prop, SearchStrategy::default(), 5, 5000);
 
-    assert!(!solutions.is_empty(), "Should find carts costing 25 with unbound MaxSize");
+    assert!(!solution_set.solutions().is_empty(), "Should find carts costing 25 with unbound MaxSize");
 }
