@@ -260,6 +260,10 @@ impl<'a> Compiler<'a> {
         self.lower_term_to_prop(term)
     }
 
+    pub fn compile_fact(&mut self, term: &Term) -> PropId {
+        self.lower_term_to_prop(term)
+    }
+
     fn lower_rule(&mut self, rule: &Rule, fact_var_map: &HashMap<String, TermId>) -> Clause {
         self.clear_scope();
         

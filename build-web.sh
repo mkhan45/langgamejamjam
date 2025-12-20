@@ -17,7 +17,8 @@ RUSTFLAGS="$RUSTFLAGS -Clink-args=-sEXPORT_ES6=1"
 RUSTFLAGS="$RUSTFLAGS -Clink-args=-sALLOW_MEMORY_GROWTH=1"
 export RUSTFLAGS
 
-cargo build --features profile --target=wasm32-unknown-emscripten $CARGO_ARGS
+# cargo build --features profile --target=wasm32-unknown-emscripten $CARGO_ARGS
+cargo build --target=wasm32-unknown-emscripten $CARGO_ARGS
 
 if $RELEASE; then
     cp target/wasm32-unknown-emscripten/release/langame.wasm docs

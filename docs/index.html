@@ -2,29 +2,93 @@
 <html>
     <head>
         <title> editor </title>
+        <script src="https://pixijs.download/v7.4.2/pixi.js"></script>
+        <style>
+            body {
+                margin: 0;
+                padding: 10px;
+                font-family: sans-serif;
+            }
+            .container {
+                display: flex;
+                gap: 20px;
+            }
+            .left-column {
+                flex: 1;
+                min-width: 0;
+            }
+            .right-column {
+                width: 820px;
+                flex-shrink: 0;
+            }
+            #canvas-container {
+                border: 2px solid #333;
+                background: #1a1a2e;
+            }
+            #input {
+                width: 100%;
+                height: 25em;
+                box-sizing: border-box;
+            }
+            .controls {
+                margin: 10px 0;
+            }
+            .controls button, .controls input, .controls select {
+                margin-right: 5px;
+            }
+            #state-vars {
+                margin: 10px 0;
+                padding: 10px;
+                background: #f0f0f0;
+                font-family: monospace;
+            }
+            #output {
+                max-height: 300px;
+                overflow-y: auto;
+                background: #f8f8f8;
+                padding: 10px;
+                border: 1px solid #ccc;
+            }
+            #keys-display {
+                margin-top: 10px;
+                padding: 5px;
+                background: #e0e0e0;
+                font-family: monospace;
+                font-size: 12px;
+            }
+        </style>
     </head>
     <body>
-        <textarea id="input" style="width: 80vw; height: 30em">
+        <div class="container">
+            <div class="left-column">
+                <textarea id="input">
 Begin Facts:
     StateVar RunnerY
     StateVar RunnerVY
     StateVar ObstacleX
+    StateVar Dead
     eq(RunnerY, 0.0)
     eq(RunnerVY, 0.0)
-    eq(ObstacleX, 30.0)
+    eq(ObstacleX, 100.0)
+    eq(Dead, no)
     true()
 End Facts
 
 Begin Global:
-Rule ShouldJump:
-    and(real_eq(RunnerY, 0.0), and(real_ge(ObstacleX, 8.0), real_le(ObstacleX, 18.0)))
-    ---------------------------------------------------------------------------------
+    Rule ShouldJump:
+    and(real_eq(RunnerY, 0.0), key_pressed(space))
+    ----------------------------------------------
     shouldJump()
 
-Rule RespawnObstacle:
+    Rule RespawnObstacle:
     real_lt(ObstacleX, -3.0)
     ------------------------
     shouldRespawnObstacle()
+
+    Rule GameOver:
+    and(real_lt(RunnerY, 1.0), real_lt(ObstacleX, 2.0))
+    ----------------------------------------------------
+    collided()
 End Global
 
 Begin Stage Control:
@@ -34,8 +98,12 @@ Begin Stage Control:
             and(not(shouldJump()), eq(next(RunnerVY), RunnerVY))
         )
         or(
-            and(shouldRespawnObstacle(), eq(next(ObstacleX), 30.0)),
+            and(shouldRespawnObstacle(), eq(next(ObstacleX), 100.0)),
             and(not(shouldRespawnObstacle()), real_sub(ObstacleX, 1.5, next(ObstacleX)))
+        )
+        or(
+            and(collided(), eq(next(Dead), yes)),
+            and(not(collided()), eq(next(Dead), Dead))
         )
     End State Constraints
 End Stage Control
@@ -53,35 +121,75 @@ End Stage Physics
 
 Begin Stage Draw:
     Rule DrawPlayer:
-    true()
+    not(eq(Dead, yes))
     --------------
     rect(1.0, RunnerY, 1.0, 1.0)
 
     Rule DrawObstacle:
-    true()
+    not(eq(Dead, yes))
     --------------
     rect(ObstacleX, 0.0, 1.0, 1.0)
+
+    Rule DrawLEye:
+    eq(Dead, yes)
+    -------------
+    rect(40.0, 40.0, 1.0, 1.0)
+
+    Rule DrawREye:
+    eq(Dead, yes)
+    -------------
+    rect(60.0, 40.0, 1.0, 1.0)
+    
+    Rule DrawFrown:
+    eq(Dead, yes)
+    -------------
+    rect(46.0, 25.0, 9.0, 1.0)
+
+    Rule DrawFrownL:
+    eq(Dead, yes)
+    -------------
+    rect(45.0, 23.0, 1.0, 2.0)
+
+    Rule DrawFrownR:
+    eq(Dead, yes)
+    -------------
+    rect(55.0, 23.0, 1.0, 2.0)
 End Stage Draw
-        </textarea>
-        <br/>
-        <button id="reload">Reload</button>
-        <span id="stages"></span>
-        <br/>
-        <div id="state-vars" style="margin: 10px 0; padding: 10px; background: #f0f0f0; font-family: monospace;"></div>
-        <br/>
-        <label for="strategy-select">Strategy:</label>
-        <select id="strategy-select">
-            <option value="0">BFS</option>
-            <option value="1">DFS</option>
-        </select>
-        <label for="max-steps-input">Max steps:</label>
-        <input id="max-steps-input" type="number" value="10000" style="width: 80px"></input>
-        <input id="query-input" type="text" value="rect(X, Y, W, H)" style="width: 300px"></input>
-        <button id="query-btn">Query</button>
-        <button id="next-btn" disabled>Next</button>
-        <button id="stop-btn" disabled>Stop</button>
-        <br/>
-        <pre id="output"></pre>
+                </textarea>
+                <div class="controls">
+                    <button id="reload">Reload</button>
+                    <span id="stages"></span>
+                </div>
+                <div id="state-vars"></div>
+                <div class="controls">
+                    <label for="strategy-select">Strategy:</label>
+                    <select id="strategy-select">
+                        <option value="0">BFS</option>
+                        <option value="1">DFS</option>
+                    </select>
+                    <label for="max-steps-input">Max steps:</label>
+                    <input id="max-steps-input" type="number" value="10000" style="width: 80px">
+                    <input id="query-input" type="text" value="rect(X, Y, W, H)" style="width: 200px">
+                    <button id="query-btn">Query</button>
+                    <button id="next-btn" disabled>Next</button>
+                    <button id="stop-btn" disabled>Stop</button>
+                </div>
+                <pre id="output"></pre>
+            </div>
+            <div class="right-column">
+                <div class="controls">
+                    <button id="step-btn">Step</button>
+                    <button id="draw-btn">Draw</button>
+                    <button id="run-btn">Run</button>
+                    <button id="pause-btn" disabled>Pause</button>
+                    <label>
+                        <input type="checkbox" id="auto-reload-cb" checked> Auto-reload
+                    </label>
+                </div>
+                <div id="canvas-container"></div>
+                <div id="keys-display">Keys: <span id="keys-list">(none)</span></div>
+            </div>
+        </div>
         <script type="module">
             import module_loader from './langame.js';
 
@@ -121,6 +229,9 @@ End Stage Draw
             let frontend_state_var_count = Module.cwrap('frontend_state_var_count', 'number', ['number']);
             let frontend_state_var_name = Module.cwrap('frontend_state_var_name', 'string', ['number', 'number']);
             let frontend_state_var_value = Module.cwrap('frontend_state_var_value', 'string', ['number', 'number']);
+            let frontend_query_batch = Module.cwrap('frontend_query_batch', 'string', ['number', 'string', 'number', 'number']);
+            let frontend_add_fact = Module.cwrap('frontend_add_fact', 'number', ['number', 'string']);
+            let frontend_clear_facts_by_relation = Module.cwrap('frontend_clear_facts_by_relation', null, ['number', 'string']);
 
             const reloadBtn = document.querySelector('#reload');
             const stagesSpan = document.querySelector('#stages');
@@ -133,11 +244,198 @@ End Stage Draw
             const stopBtn = document.querySelector('#stop-btn');
             const strategySelect = document.querySelector('#strategy-select');
             const maxStepsInput = document.querySelector('#max-steps-input');
+            const stepBtn = document.querySelector('#step-btn');
+            const drawBtn = document.querySelector('#draw-btn');
+            const runBtn = document.querySelector('#run-btn');
+            const pauseBtn = document.querySelector('#pause-btn');
+            const autoReloadCb = document.querySelector('#auto-reload-cb');
+            const canvasContainer = document.querySelector('#canvas-container');
+            const keysList = document.querySelector('#keys-list');
 
             let currentModule = null;
             let frontend = create_frontend();
             let queryStartTime = null;
             let lastRunStage = -1;
+            let drawStageIndex = -1;
+            let isRunning = false;
+            let animationId = null;
+            let lastFrameTime = 0;
+            const FRAME_INTERVAL = 1000 / 30; // 30 FPS
+
+            const CANVAS_WIDTH = 800;
+            const CANVAS_HEIGHT = 400;
+            const SCALE = 8;
+
+            const app = new PIXI.Application({
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                backgroundColor: 0x1a1a2e,
+            });
+            canvasContainer.appendChild(app.view);
+
+            const graphics = new PIXI.Graphics();
+            app.stage.addChild(graphics);
+
+            const pressedKeys = new Set();
+
+            function updateKeysDisplay() {
+                if (pressedKeys.size === 0) {
+                    keysList.textContent = '(none)';
+                } else {
+                    keysList.textContent = Array.from(pressedKeys).join(', ');
+                }
+            }
+
+            function keyToAtom(key) {
+                const keyMap = {
+                    ' ': 'space',
+                    'ArrowUp': 'up',
+                    'ArrowDown': 'down',
+                    'ArrowLeft': 'left',
+                    'ArrowRight': 'right',
+                    'Enter': 'enter',
+                    'Escape': 'escape',
+                    'Shift': 'shift',
+                    'Control': 'ctrl',
+                    'Alt': 'alt',
+                };
+                return keyMap[key] || key.toLowerCase();
+            }
+
+            document.addEventListener('keydown', (e) => {
+                if (e.target === inp) return;
+                const atom = keyToAtom(e.key);
+                if (!pressedKeys.has(atom)) {
+                    pressedKeys.add(atom);
+                    frontend_add_fact(frontend, `key_pressed(${atom})`);
+                    updateKeysDisplay();
+                }
+                if (e.key === ' ' || e.key.startsWith('Arrow')) {
+                    e.preventDefault();
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                if (e.target === inp) return;
+                const atom = keyToAtom(e.key);
+                pressedKeys.delete(atom);
+                frontend_clear_facts_by_relation(frontend, 'key_pressed');
+                for (const k of pressedKeys) {
+                    frontend_add_fact(frontend, `key_pressed(${k})`);
+                }
+                updateKeysDisplay();
+            });
+
+            function findStageIndices() {
+                const count = frontend_stage_count(frontend);
+                drawStageIndex = -1;
+                for (let i = 0; i < count; i++) {
+                    const name = frontend_stage_name(frontend, i);
+                    if (name === 'Draw') drawStageIndex = i;
+                }
+            }
+
+            function parseQuerySolution(solution, varNames) {
+                const result = {};
+                for (const name of varNames) {
+                    const regex = new RegExp(`(?:^|,\\s*)${name}\\s*=\\s*([^,]+)`);
+                    const match = solution.match(regex);
+                    if (match) {
+                        const val = match[1].trim();
+                        const num = parseFloat(val);
+                        result[name] = isNaN(num) ? val : num;
+                    }
+                }
+                return Object.keys(result).length === varNames.length ? result : null;
+            }
+
+            function parseRectSolution(solution) {
+                const parsed = parseQuerySolution(solution, ['X', 'Y', 'W', 'H']);
+                if (parsed) {
+                    return { x: parsed.X, y: parsed.Y, w: parsed.W, h: parsed.H };
+                }
+                return null;
+            }
+
+            function drawRects() {
+                graphics.clear();
+
+                graphics.lineStyle(1, 0x444466);
+                for (let x = 0; x <= CANVAS_WIDTH; x += SCALE) {
+                    graphics.moveTo(x, 0);
+                    graphics.lineTo(x, CANVAS_HEIGHT);
+                }
+                for (let y = 0; y <= CANVAS_HEIGHT; y += SCALE) {
+                    graphics.moveTo(0, CANVAS_HEIGHT - y);
+                    graphics.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT - y);
+                }
+
+                if (drawStageIndex < 0) return;
+
+                const result = frontend_query_batch(frontend, 'rect(X, Y, W, H)', drawStageIndex, 100);
+                if (!result || result.startsWith('Error')) return;
+
+                const solutions = result.split('\n').filter(s => s.trim());
+                graphics.beginFill(0x00ff88);
+                for (const sol of solutions) {
+                    const rect = parseRectSolution(sol);
+                    console.log(rect);
+                    if (rect) {
+                        const screenX = rect.x * SCALE;
+                        const screenY = CANVAS_HEIGHT - (rect.y + rect.h) * SCALE;
+                        const screenW = rect.w * SCALE;
+                        const screenH = rect.h * SCALE;
+                        graphics.drawRect(screenX, screenY, screenW, screenH);
+                    }
+                }
+                graphics.endFill();
+            }
+
+            function step() {
+                const count = frontend_stage_count(frontend);
+                for (let i = 0; i < count; i++) {
+                    if (i === drawStageIndex) break;
+                    frontend_run_stage(frontend, i);
+                }
+                drawRects();
+                updateStateVars();
+            }
+
+            stepBtn.onclick = step;
+
+            drawBtn.onclick = () => {
+                drawRects();
+            };
+
+            function gameLoop(timestamp) {
+                if (!isRunning) return;
+                const elapsed = timestamp - lastFrameTime;
+                if (elapsed >= FRAME_INTERVAL) {
+                    lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
+                    step();
+                }
+                animationId = requestAnimationFrame(gameLoop);
+            }
+
+            runBtn.onclick = () => {
+                if (autoReloadCb.checked) {
+                    reloadBtn.click();
+                }
+                isRunning = true;
+                runBtn.disabled = true;
+                pauseBtn.disabled = false;
+                gameLoop();
+            };
+
+            pauseBtn.onclick = () => {
+                isRunning = false;
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                runBtn.disabled = false;
+                pauseBtn.disabled = true;
+            };
 
             function reasonToString(reasonCode) {
                 switch (reasonCode) {
@@ -197,6 +495,7 @@ End Stage Draw
                             lastRunStage = stageIndex;
                             out.innerText += '\nRan stage: ' + btn.textContent;
                             updateStateVars();
+                            drawRects();
                         } else {
                             out.innerText += '\nStage failed: ' + btn.textContent;
                         }
@@ -232,7 +531,9 @@ End Stage Draw
                 out.innerText = 'Loaded: ' + factCount + ' facts, ' + ruleCount + ' global rules, ' + stageCount + ' stages';
 
                 buildStageButtons();
+                findStageIndices();
                 updateStateVars();
+                drawRects();
             };
 
             function updateButtons() {
@@ -267,6 +568,8 @@ End Stage Draw
                 out.innerText += '\n(stopped)';
                 updateButtons();
             };
+
+            reloadBtn.click();
         </script>
     </body>
 </html>

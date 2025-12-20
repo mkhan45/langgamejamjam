@@ -263,3 +263,47 @@ pub unsafe extern "C" fn module_get_stage_name(module: *mut Module, index: i32) 
         }
     }
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_query_batch(
+    frontend: *mut Frontend,
+    query: *const c_char,
+    stage_index: i32,
+    limit: i32,
+) -> *mut c_char {
+    unsafe {
+        let query_str = CStr::from_ptr(query).to_str().unwrap_or("");
+        let stage = if stage_index >= 0 { Some(stage_index as usize) } else { None };
+        let result = (*frontend).query_batch_in_stage(query_str, limit as usize, stage);
+        let output = match result {
+            Ok(solutions) => {
+                if solutions.is_empty() {
+                    "".to_string()
+                } else {
+                    solutions.join("\n")
+                }
+            }
+            Err(e) => format!("Error: {}", e),
+        };
+        CString::new(output).unwrap().into_raw()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_add_fact(frontend: *mut Frontend, fact: *const c_char) -> i32 {
+    unsafe {
+        let fact_str = CStr::from_ptr(fact).to_str().unwrap_or("");
+        match (*frontend).add_fact(fact_str) {
+            Ok(()) => 1,
+            Err(_) => 0,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_clear_facts_by_relation(frontend: *mut Frontend, relation: *const c_char) {
+    unsafe {
+        let relation_str = CStr::from_ptr(relation).to_str().unwrap_or("");
+        (*frontend).clear_facts_by_relation(relation_str);
+    }
+}

@@ -2,22 +2,29 @@ Begin Facts:
     StateVar RunnerY
     StateVar RunnerVY
     StateVar ObstacleX
+    StateVar Dead
     eq(RunnerY, 0.0)
     eq(RunnerVY, 0.0)
-    eq(ObstacleX, 30.0)
+    eq(ObstacleX, 100.0)
+    eq(Dead, no)
     true()
 End Facts
 
 Begin Global:
-Rule ShouldJump:
-    and(real_eq(RunnerY, 0.0), and(real_ge(ObstacleX, 8.0), real_le(ObstacleX, 18.0)))
-    ---------------------------------------------------------------------------------
+    Rule ShouldJump:
+    and(real_eq(RunnerY, 0.0), key_pressed(space))
+    ----------------------------------------------
     shouldJump()
 
-Rule RespawnObstacle:
+    Rule RespawnObstacle:
     real_lt(ObstacleX, -3.0)
     ------------------------
     shouldRespawnObstacle()
+
+    Rule GameOver:
+    and(real_lt(RunnerY, 1.0), real_lt(ObstacleX, 2.0))
+    ----------------------------------------------------
+    collided()
 End Global
 
 Begin Stage Control:
@@ -27,8 +34,12 @@ Begin Stage Control:
             and(not(shouldJump()), eq(next(RunnerVY), RunnerVY))
         )
         or(
-            and(shouldRespawnObstacle(), eq(next(ObstacleX), 30.0)),
+            and(shouldRespawnObstacle(), eq(next(ObstacleX), 100.0)),
             and(not(shouldRespawnObstacle()), real_sub(ObstacleX, 1.5, next(ObstacleX)))
+        )
+        or(
+            and(collided(), eq(next(Dead), yes)),
+            and(not(collided()), eq(next(Dead), Dead))
         )
     End State Constraints
 End Stage Control
@@ -46,12 +57,37 @@ End Stage Physics
 
 Begin Stage Draw:
     Rule DrawPlayer:
-    true()
+    not(eq(Dead, yes))
     --------------
     rect(1.0, RunnerY, 1.0, 1.0)
 
     Rule DrawObstacle:
-    true()
+    not(eq(Dead, yes))
     --------------
     rect(ObstacleX, 0.0, 1.0, 1.0)
+
+    Rule DrawLEye:
+    eq(Dead, yes)
+    -------------
+    rect(40.0, 40.0, 1.0, 1.0)
+
+    Rule DrawREye:
+    eq(Dead, yes)
+    -------------
+    rect(60.0, 40.0, 1.0, 1.0)
+    
+    Rule DrawFrown:
+    eq(Dead, yes)
+    -------------
+    rect(46.0, 25.0, 9.0, 1.0)
+
+    Rule DrawFrownL:
+    eq(Dead, yes)
+    -------------
+    rect(45.0, 23.0, 1.0, 2.0)
+
+    Rule DrawFrownR:
+    eq(Dead, yes)
+    -------------
+    rect(55.0, 23.0, 1.0, 2.0)
 End Stage Draw

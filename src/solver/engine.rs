@@ -716,24 +716,14 @@ impl<'p> Solver<'p> {
                     RelKind::User => {
                         self.step_user_rel(&state, rel, &args, queue);
                     }
-                    RelKind::SMTInt => {
-                        if let Some(constraint) = self.make_int_constraint(&rel_info.name, &args) {
-                            let new_state = state.with_constraint(constraint);
-                            if let Some((solved_subst, remaining)) = new_state
-                                .constraints
-                                .propagate_ground(&new_state.subst, self.program, &self.z3_solver)
-                            {
-                                queue.push(State {
-                                    subst: solved_subst,
-                                    constraints: remaining,
-                                    goals: new_state.goals,
-                                });
-                            }
-                        }
-                    }
-                    RelKind::SMTReal => {
-                        if let Some(constraint) = self.make_real_constraint(&rel_info.name, &args) {
-                            let new_state = state.with_constraint(constraint);
+                    RelKind::SMTInt | RelKind::SMTReal => {
+                        let constraint = match rel_info.kind {
+                            RelKind::SMTInt => self.make_int_constraint(&rel_info.name, &args),
+                            RelKind::SMTReal => self.make_real_constraint(&rel_info.name, &args),
+                            RelKind::User => unreachable!(),
+                        };
+                        if let Some(c) = constraint {
+                            let new_state = state.with_constraint(c);
                             if let Some((solved_subst, remaining)) = new_state
                                 .constraints
                                 .propagate_ground(&new_state.subst, self.program, &self.z3_solver)

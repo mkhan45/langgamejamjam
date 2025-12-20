@@ -76,16 +76,16 @@ impl Frontend {
     }
 
     pub fn query_batch(&mut self, query_str: &str, limit: usize) -> Result<Vec<String>, String> {
-        self.query_batch_with_steps(query_str, limit, self.max_steps, None)
+        self.query_batch_in_stage(query_str, limit, None)
     }
 
-    fn query_batch_with_steps(
+    pub fn query_batch_in_stage(
         &mut self,
         query_str: &str,
         limit: usize,
-        max_steps: usize,
         stage_index: Option<usize>,
     ) -> Result<Vec<String>, String> {
+        let max_steps = self.max_steps;
         if let Some(idx) = stage_index {
             self.push_stage_rules(idx);
         }
@@ -455,5 +455,29 @@ impl Frontend {
             }
             result
         }
+    }
+
+    pub fn add_fact(&mut self, fact_str: &str) -> Result<(), String> {
+        let term_result = parser::parse_term(fact_str.into()).finish();
+        let term = match term_result {
+            Ok((_, term)) => term,
+            Err(e) => return Err(format!("Fact parse error: {:?}", e)),
+        };
+
+        let prop = Compiler::with_var_map(&mut self.program, self.var_map.clone())
+            .compile_fact(&term);
+        self.program.facts.push(prop);
+        Ok(())
+    }
+
+    pub fn clear_facts_by_relation(&mut self, relation_name: &str) {
+        self.program.facts.retain(|&fact_id| {
+            let prop = self.program.props.get(fact_id);
+            if let Prop::App { rel, .. } = prop {
+                let rel_data = self.program.rels.get(*rel);
+                return rel_data.name != relation_name;
+            }
+            true
+        });
     }
 }
