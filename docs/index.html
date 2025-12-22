@@ -67,10 +67,12 @@ Begin Facts:
     StateVar RunnerY
     StateVar RunnerVY
     StateVar ObstacleX
+    StateVar ObstacleVX
     StateVar Dead
     eq(RunnerY, 0.0)
     eq(RunnerVY, 0.0)
     eq(ObstacleX, 100.0)
+    eq(ObstacleVX, 1.5)
     eq(Dead, no)
     true()
 End Facts
@@ -99,8 +101,8 @@ Begin Stage Control:
             and(not(shouldJump()), eq(next(RunnerVY), RunnerVY))
         )
         or(
-            and(shouldRespawnObstacle(), eq(next(ObstacleX), 100.0)),
-            and(not(shouldRespawnObstacle()), real_sub(ObstacleX, 1.5, next(ObstacleX)))
+            and(shouldRespawnObstacle(), and(eq(next(ObstacleX), 100.0), real_add(ObstacleVX, 0.25, next(ObstacleVX)))),
+            and(not(shouldRespawnObstacle()), and(real_sub(ObstacleX, ObstacleVX, next(ObstacleX)), eq(next(ObstacleVX), ObstacleVX)))
         )
         or(
             and(collided(), eq(next(Dead), yes)),
