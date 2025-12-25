@@ -1,7 +1,10 @@
 # gg3z
 
-A relational/logic/SMT language for developing games, developed for the 2025 Lang Jam Game Jam.
+A relational/logic/SMT language for developing games, developed for the [2025 Lang Jam Game Jam](https://itch.io/jam/langjamgamejam).
 Try out the editor and a simple game: <https://mkhan45.github.io/gg3z/>
+
+`gg3z` was rated the most creative language in the jam, but I'm a bit embarrassed that I barely wrote a game for it.
+Check out the submission here: <https://itch.io/jam/langjamgamejam/rate/4136346>
 
 # Relational Programming
 
