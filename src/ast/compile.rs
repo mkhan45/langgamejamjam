@@ -1,10 +1,29 @@
 use std::collections::HashMap;
 
 use crate::ast::{Module, Rel, Rule, Stage, Term, TermContents};
+use crate::ast::parser::{self, Span};
 use crate::solver::ir::{
     Clause, Program, Prop, PropId, RelId, RelInfo, RelKind, Stage as IrStage, SymbolId,
     Term as IRTerm, TermId, Var,
 };
+use nom::Finish;
+use nom::Parser;
+use nom::multi::many0;
+use nom::character::complete::multispace0;
+
+const STDLIB: &str = include_str!("../stdlib.l");
+
+fn parse_stdlib_rules() -> Vec<Rule> {
+    let input: Span = STDLIB.into();
+    let result = many0(|s| {
+        let (s, _) = multispace0(s)?;
+        parser::parse_rule(s)
+    }).parse(input);
+    match result.finish() {
+        Ok((_, rules)) => rules,
+        Err(_) => panic!("Failed to parse stdlib"),
+    }
+}
 
 const SMT_INT_RELATIONS: &[(&str, usize)] = &[
     ("int_eq", 2),
@@ -216,6 +235,13 @@ impl<'a> Compiler<'a> {
                         let or_prop = Prop::Or(lhs_prop, rhs_prop);
                         self.alloc_prop(or_prop)
                     }
+                    "cond" => {
+                        let guard_prop = self.lower_term_to_prop(&args[0]);
+                        let lhs_prop = self.lower_term_to_prop(&args[1]);
+                        let rhs_prop = self.lower_term_to_prop(&args[2]);
+                        let cond_prop = Prop::Cond(guard_prop, lhs_prop, rhs_prop);
+                        self.alloc_prop(cond_prop)
+                    }
                     "not" => {
                         let prop = self.lower_term_to_prop(&args[0]);
                         let not_prop = Prop::Not(prop);
@@ -353,6 +379,11 @@ impl<'a> Compiler<'a> {
             self.program.global_rules.push(clause);
         }
 
+        for rule in parse_stdlib_rules() {
+            let clause = self.lower_rule(&rule, &fact_var_map);
+            self.program.global_rules.push(clause);
+        }
+
         for stage in &module.stages {
             let ir_stage = self.lower_stage(stage, &fact_var_map);
             self.program.stages.push(ir_stage);
@@ -414,9 +445,7 @@ Rule MoveRight:
 End Global
 "#;
         let program = parse_and_compile(input);
-        assert_eq!(program.global_rules.len(), 1);
-        let clause = &program.global_rules[0];
-        assert_eq!(clause.name, "MoveRight");
+        let clause = program.global_rules.iter().find(|c| c.name == "MoveRight").unwrap();
         assert_eq!(program.rels.get(clause.head_rel).name, "position");
     }
 
@@ -433,9 +462,8 @@ Rule Increment:
 End Global
 "#;
         let program = parse_and_compile(input);
-        assert_eq!(program.global_rules.len(), 1);
 
-        let clause = &program.global_rules[0];
+        let clause = program.global_rules.iter().find(|c| c.name == "Increment").unwrap();
         let body_prop = program.props.get(clause.body);
         match body_prop {
             Prop::App { rel, args } => {

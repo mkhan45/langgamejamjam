@@ -641,6 +641,16 @@ impl<'p> Solver<'p> {
                     self.program.props.alloc(Prop::Or(new_p1, new_p2))
                 }
             }
+            Prop::Cond(c, p1, p2) => {
+                let new_c = self.rename_prop(c, var_map);
+                let new_p1 = self.rename_prop(p1, var_map);
+                let new_p2 = self.rename_prop(p2, var_map);
+                if new_c == c && new_p1 == p1 && new_p2 == p2 {
+                    prop_id
+                } else {
+                    self.program.props.alloc(Prop::Cond(new_c, new_p1, new_p2))
+                }
+            }
             Prop::Not(p) => {
                 let new_p = self.rename_prop(p, var_map);
                 if new_p == p {
@@ -685,12 +695,21 @@ impl<'p> Solver<'p> {
                 queue.push(new_state);
             }
             Prop::Or(p1, p2) => {
-                queue.push(state.clone().with_goal(p1));
+                queue.push(state.with_goal(p1));
                 queue.push(state.with_goal(p2));
+            }
+            Prop::Cond(c, p1, p2) => {
+                let t_prop = self.program.props.alloc(Prop::And(c, p1));
+                let e_prop = {
+                    let n_prop = self.program.props.alloc(Prop::Not(c));
+                    self.program.props.alloc(Prop::And(n_prop, p2))
+                };
+                queue.push(state.with_goal(t_prop));
+                queue.push(state.with_goal(e_prop));
             }
             Prop::Not(p) => {
                 let mut neg_queue = SearchQueue::new();
-                neg_queue.push(state.clone().with_goal(p));
+                neg_queue.push(state.with_goal(p));
                 
                 let mut found_valid_solution = false;
 

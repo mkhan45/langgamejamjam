@@ -184,6 +184,7 @@ pub enum Prop {
     And(PropId, PropId),
     Or(PropId, PropId),
     Not(PropId),
+    Cond(PropId, PropId, PropId),
     App { rel: RelId, args: Vec<TermId> },
 }
 
