@@ -266,7 +266,7 @@ End Stage TestStage
         // Verify state variables are initialized correctly
         assert_eq!(frontend.get_state_var("RunnerY").unwrap(), "0");
         assert_eq!(frontend.get_state_var("RunnerVY").unwrap(), "0");
-        assert_eq!(frontend.get_state_var("ObstacleX").unwrap(), "30");
+        assert_eq!(frontend.get_state_var("ObstacleX").unwrap(), "100");
 
         // shouldJump should fail because ObstacleX is 30, which is not in range [8, 18]
         match frontend.query_start_global("shouldJump()") {

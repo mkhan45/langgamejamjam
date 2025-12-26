@@ -49,6 +49,21 @@ Rule <Name>:
 - `not(P)` — negation (via failure to prove)
 - `eq(X, Y)` — structural unification
 
+### Operator Syntax (Sugar)
+Binary and unary operators as syntactic sugar. Precedence from lowest to highest:
+
+| Operator | Desugars to | Notes |
+|----------|-------------|-------|
+| `a \| b`, `a ∨ b` | `or(a, b)` | Disjunction |
+| `a & b`, `a ∧ b` | `and(a, b)` | Conjunction |
+| `<`, `<=`, `>`, `>=` | `int_lt`, `int_le`, `int_gt`, `int_ge` | Integer comparison |
+| `==` | `int_eq` | Integer equality |
+| `.<`, `.<=`, `.>`, `.>=`, `.==` | `real_lt`, `real_le`, `real_gt`, `real_ge`, `real_eq` | Real comparison |
+| `a = b` | `eq(a, b)` | Structural unification (binds tighter than `&`, `\|`) |
+| `!a`, `¬a` | `not(a)` | Negation (unary prefix) |
+
+All binary operators are left-associative. Parentheses work for grouping: `(a | b) & c`.
+
 ### SMT Relations (solved via Z3)
 ```
 int_eq, int_neq, int_lt, int_le, int_gt, int_ge

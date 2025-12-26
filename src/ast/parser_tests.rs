@@ -643,3 +643,157 @@ fn test_parse_module_multiple_global_rules() {
 
     assert_eq!(*remaining.fragment(), "");
 }
+
+// ============================================================================
+// Binary operator tests
+// ============================================================================
+
+fn assert_binop(term: &Term, expected_rel: &str, check_args: impl FnOnce(&[Term])) {
+    match &term.contents {
+        TermContents::App { rel, args } => {
+            let name = match rel {
+                Rel::UserRel { name } => name,
+                Rel::SMTRel { name } => name,
+            };
+            assert_eq!(name, expected_rel, "Expected rel {}, got {}", expected_rel, name);
+            check_args(args);
+        }
+        _ => panic!("Expected App, got {:?}", term.contents),
+    }
+}
+
+#[test]
+fn test_parse_eq_operator() {
+    let input = Span::new("X = Y");
+    let (remaining, term) = parse_term(input).unwrap();
+    assert_binop(&term, "eq", |args| {
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].contents, TermContents::Var { name } if name == "X"));
+        assert!(matches!(&args[1].contents, TermContents::Var { name } if name == "Y"));
+    });
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_parse_or_operator() {
+    let input = Span::new("a | b");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "or", |args| {
+        assert_eq!(args.len(), 2);
+    });
+
+    let input2 = Span::new("a ∨ b");
+    let (_, term2) = parse_term(input2).unwrap();
+    assert_binop(&term2, "or", |args| {
+        assert_eq!(args.len(), 2);
+    });
+}
+
+#[test]
+fn test_parse_and_operator() {
+    let input = Span::new("a & b");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "and", |args| {
+        assert_eq!(args.len(), 2);
+    });
+
+    let input2 = Span::new("a ∧ b");
+    let (_, term2) = parse_term(input2).unwrap();
+    assert_binop(&term2, "and", |args| {
+        assert_eq!(args.len(), 2);
+    });
+}
+
+#[test]
+fn test_parse_not_operator() {
+    let input = Span::new("!a");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "not", |args| {
+        assert_eq!(args.len(), 1);
+    });
+
+    let input2 = Span::new("¬a");
+    let (_, term2) = parse_term(input2).unwrap();
+    assert_binop(&term2, "not", |args| {
+        assert_eq!(args.len(), 1);
+    });
+}
+
+#[test]
+fn test_parse_int_comparisons() {
+    for (op, rel) in [("<", "int_lt"), ("<=", "int_le"), (">", "int_gt"), (">=", "int_ge"), ("==", "int_eq")] {
+        let s = format!("X {} Y", op);
+        let input = Span::new(&s);
+        let (_, term) = parse_term(input).unwrap();
+        assert_binop(&term, rel, |args| {
+            assert_eq!(args.len(), 2);
+        });
+    }
+}
+
+#[test]
+fn test_parse_real_comparisons() {
+    for (op, rel) in [(".<", "real_lt"), (".<=", "real_le"), (".>", "real_gt"), (".>=", "real_ge"), (".==", "real_eq")] {
+        let s = format!("X {} Y", op);
+        let input = Span::new(&s);
+        let (_, term) = parse_term(input).unwrap();
+        assert_binop(&term, rel, |args| {
+            assert_eq!(args.len(), 2);
+        });
+    }
+}
+
+#[test]
+fn test_operator_precedence() {
+    // a = b & c should parse as and(eq(a, b), c) - eq binds tighter than and
+    let input = Span::new("a = b & c");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "and", |args| {
+        assert_eq!(args.len(), 2);
+        assert_binop(&args[0], "eq", |eq_args| {
+            assert!(matches!(&eq_args[0].contents, TermContents::Atom { text } if text == "a"));
+            assert!(matches!(&eq_args[1].contents, TermContents::Atom { text } if text == "b"));
+        });
+        assert!(matches!(&args[1].contents, TermContents::Atom { text } if text == "c"));
+    });
+
+    // a | b & c should parse as or(a, and(b, c))
+    let input2 = Span::new("a | b & c");
+    let (_, term2) = parse_term(input2).unwrap();
+    assert_binop(&term2, "or", |args| {
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].contents, TermContents::Atom { text } if text == "a"));
+        assert_binop(&args[1], "and", |_| {});
+    });
+
+    // !a & b should parse as and(not(a), b)
+    let input3 = Span::new("!a & b");
+    let (_, term3) = parse_term(input3).unwrap();
+    assert_binop(&term3, "and", |args| {
+        assert_eq!(args.len(), 2);
+        assert_binop(&args[0], "not", |_| {});
+    });
+}
+
+#[test]
+fn test_parenthesized_expr() {
+    // (a | b) & c should parse as and(or(a, b), c)
+    let input = Span::new("(a | b) & c");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "and", |args| {
+        assert_eq!(args.len(), 2);
+        assert_binop(&args[0], "or", |_| {});
+    });
+}
+
+#[test]
+fn test_comparison_precedence() {
+    // X < 5 & Y > 3 should parse as and(int_lt(X, 5), int_gt(Y, 3))
+    let input = Span::new("X < 5 & Y > 3");
+    let (_, term) = parse_term(input).unwrap();
+    assert_binop(&term, "and", |args| {
+        assert_eq!(args.len(), 2);
+        assert_binop(&args[0], "int_lt", |_| {});
+        assert_binop(&args[1], "int_gt", |_| {});
+    });
+}
