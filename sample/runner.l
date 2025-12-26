@@ -49,12 +49,12 @@ End Stage Physics
 
 Begin Stage Draw:
     Rule DrawPlayer:
-    !(Dead = yes)
+    Dead = no
     --------------
     rect(1.0, RunnerY, 1.0, 1.0)
 
     Rule DrawObstacle:
-    !(Dead = yes)
+    Dead = no
     --------------
     rect(ObstacleX, 0.0, 1.0, 1.0)
 
