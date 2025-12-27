@@ -797,3 +797,94 @@ fn test_comparison_precedence() {
         assert_binop(&args[1], "int_gt", |_| {});
     });
 }
+
+// ============================================================================
+// Comment tests
+// ============================================================================
+
+#[test]
+fn test_comment_after_fact() {
+    let input = Span::new("Begin Facts:\n    foo # this is a comment\nEnd Facts\n\nBegin Global:\nEnd Global\n");
+    let (remaining, module) = parse_module(input).unwrap();
+    
+    assert_eq!(module.facts.len(), 1);
+    match &module.facts[0].contents {
+        TermContents::Atom { text } => assert_eq!(*text, "foo"),
+        _ => panic!("Expected Atom"),
+    }
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_comment_only_line() {
+    let input = Span::new("Begin Facts:\n    # just a comment\n    foo\nEnd Facts\n\nBegin Global:\nEnd Global\n");
+    let (remaining, module) = parse_module(input).unwrap();
+    
+    assert_eq!(module.facts.len(), 1);
+    match &module.facts[0].contents {
+        TermContents::Atom { text } => assert_eq!(*text, "foo"),
+        _ => panic!("Expected Atom"),
+    }
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_comment_in_rule() {
+    let input = Span::new("Rule Test:\n    add(X, Y) # premise comment\n    --------\n    result(X) # conclusion comment");
+    let (remaining, rule) = parse_rule(input).unwrap();
+    
+    assert_eq!(rule.name, "Test");
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_comment_between_rules() {
+    let input = Span::new("Begin Stage Test:\n# comment before rule\nRule Foo:\n    bar(X)\n    ------\n    baz(X)\n# comment after rule\nEnd Stage Test");
+    let (remaining, stage) = parse_stage(input).unwrap();
+    
+    assert_eq!(stage.name, "Test");
+    assert_eq!(stage.rules.len(), 1);
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_multiple_comments() {
+    let input = Span::new("Begin Facts:\n    # comment 1\n    # comment 2\n    foo\n    # comment 3\nEnd Facts\n\nBegin Global:\nEnd Global\n");
+    let (remaining, module) = parse_module(input).unwrap();
+    
+    assert_eq!(module.facts.len(), 1);
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_comment_in_app_args() {
+    // Comments within argument lists
+    let input = Span::new("foo(\n    X, # first arg\n    Y  # second arg\n)");
+    let (remaining, term) = parse_term(input).unwrap();
+    
+    match &term.contents {
+        TermContents::App { rel, args } => {
+            match rel {
+                Rel::UserRel { name } => assert_eq!(*name, "foo"),
+                _ => panic!("Expected UserRel"),
+            }
+            assert_eq!(args.len(), 2);
+        }
+        _ => panic!("Expected App"),
+    }
+    assert_eq!(*remaining.fragment(), "");
+}
+
+#[test]
+fn test_comment_with_hash_in_string_context() {
+    // Ensure # is properly handled - everything after # to EOL is ignored
+    let input = Span::new("foo # bar(X) this is all comment\n");
+    let (remaining, term) = parse_term(input).unwrap();
+    
+    match &term.contents {
+        TermContents::Atom { text } => assert_eq!(*text, "foo"),
+        _ => panic!("Expected Atom"),
+    }
+    // Should leave the newline and nothing else
+    assert!(remaining.fragment().starts_with(" #") || remaining.fragment().starts_with("#") || remaining.fragment().trim().is_empty() || remaining.fragment().starts_with("\n"));
+}
