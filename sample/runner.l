@@ -25,7 +25,7 @@ Begin Global:
 
     Rule GameOver:
     RunnerY .< 1.0 & ObstacleX .< 2.0
-    ----------------------------------------------------
+    ---------------------------------
     collided()
 End Global
 
