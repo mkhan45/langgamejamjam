@@ -15,10 +15,17 @@ pub struct Module {
 }
 
 #[derive(Debug, Clone)]
+pub struct DrawDirective {
+    pub condition: Option<Term>,
+    pub draws: Vec<Term>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Stage {
     pub name: String,
     pub rules: Vec<Rule>,
     pub state_constraints: Vec<Term>,
+    pub draw_directives: Vec<DrawDirective>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +99,20 @@ impl fmt::Display for Rule {
     }
 }
 
+impl fmt::Display for DrawDirective {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(cond) = &self.condition {
+            writeln!(f, "    With")?;
+            writeln!(f, "        {}", cond)?;
+        }
+        writeln!(f, "    Draw")?;
+        for draw in &self.draws {
+            writeln!(f, "        {}", draw)?;
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for Stage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Begin Stage {}:", self.name)?;
@@ -104,6 +125,9 @@ impl fmt::Display for Stage {
                 writeln!(f, "    {}", constraint)?;
             }
             writeln!(f, "End State Constraints")?;
+        }
+        for directive in &self.draw_directives {
+            write!(f, "{}", directive)?;
         }
         writeln!(f, "End Stage {}", self.name)
     }

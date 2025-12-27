@@ -113,40 +113,20 @@ Begin Stage Physics:
 End Stage Physics
 
 Begin Stage Draw:
-    Rule DrawPlayer:
-    Dead = no
-    --------------
-    rect(1.0, RunnerY, 1.0, 1.0)
+    With
+        Dead = no
+    Draw
+        rect(1.0, RunnerY, 1.0, 1.0)
+        rect(ObstacleX, 0.0, 1.0, 1.0)
 
-    Rule DrawObstacle:
-    Dead = no
-    --------------
-    rect(ObstacleX, 0.0, 1.0, 1.0)
-
-    Rule DrawLEye:
-    Dead = yes
-    -------------
-    rect(40.0, 40.0, 1.0, 1.0)
-
-    Rule DrawREye:
-    Dead = yes
-    -------------
-    rect(60.0, 40.0, 1.0, 1.0)
-    
-    Rule DrawFrown:
-    Dead = yes
-    -------------
-    rect(46.0, 25.0, 9.0, 1.0)
-
-    Rule DrawFrownL:
-    Dead = yes
-    -------------
-    rect(45.0, 23.0, 1.0, 2.0)
-
-    Rule DrawFrownR:
-    Dead = yes
-    -------------
-    rect(55.0, 23.0, 1.0, 2.0)
+    With
+        Dead = yes
+    Draw
+        rect(40.0, 40.0, 1.0, 1.0)
+        rect(60.0, 40.0, 1.0, 1.0)
+        rect(46.0, 25.0, 9.0, 1.0)
+        rect(45.0, 23.0, 1.0, 2.0)
+        rect(55.0, 23.0, 1.0, 2.0)
 End Stage Draw
                 </textarea>
                 <div class="controls">
@@ -225,6 +205,11 @@ End Stage Draw
             let frontend_query_batch = Module.cwrap('frontend_query_batch', 'string', ['number', 'string', 'number', 'number']);
             let frontend_add_fact = Module.cwrap('frontend_add_fact', 'number', ['number', 'string']);
             let frontend_clear_facts_by_relation = Module.cwrap('frontend_clear_facts_by_relation', null, ['number', 'string']);
+            let frontend_collect_draws = Module.cwrap('frontend_collect_draws', 'number', ['number', 'number']);
+            let frontend_collect_draws_by_name = Module.cwrap('frontend_collect_draws_by_name', 'number', ['number', 'string']);
+            let frontend_draw_command_name = Module.cwrap('frontend_draw_command_name', 'string', ['number', 'number']);
+            let frontend_draw_command_arg_count = Module.cwrap('frontend_draw_command_arg_count', 'number', ['number', 'number']);
+            let frontend_draw_command_arg = Module.cwrap('frontend_draw_command_arg', 'number', ['number', 'number', 'number']);
 
             const reloadBtn = document.querySelector('#reload');
             const stagesSpan = document.querySelector('#stages');
@@ -365,20 +350,25 @@ End Stage Draw
 
                 if (drawStageIndex < 0) return;
 
-                const result = frontend_query_batch(frontend, 'rect(X, Y, W, H)', drawStageIndex, 100);
-                if (!result || result.startsWith('Error')) return;
+                const count = frontend_collect_draws(frontend, drawStageIndex);
+                if (count < 0) return;
 
-                const solutions = result.split('\n').filter(s => s.trim());
                 graphics.beginFill(0x00ff88);
-                for (const sol of solutions) {
-                    const rect = parseRectSolution(sol);
-                    console.log(rect);
-                    if (rect) {
-                        const screenX = rect.x * SCALE;
-                        const screenY = CANVAS_HEIGHT - (rect.y + rect.h) * SCALE;
-                        const screenW = rect.w * SCALE;
-                        const screenH = rect.h * SCALE;
-                        graphics.drawRect(screenX, screenY, screenW, screenH);
+                for (let i = 0; i < count; i++) {
+                    const name = frontend_draw_command_name(frontend, i);
+                    if (name === 'rect') {
+                        const argCount = frontend_draw_command_arg_count(frontend, i);
+                        if (argCount >= 4) {
+                            const x = frontend_draw_command_arg(frontend, i, 0);
+                            const y = frontend_draw_command_arg(frontend, i, 1);
+                            const w = frontend_draw_command_arg(frontend, i, 2);
+                            const h = frontend_draw_command_arg(frontend, i, 3);
+                            const screenX = x * SCALE;
+                            const screenY = CANVAS_HEIGHT - (y + h) * SCALE;
+                            const screenW = w * SCALE;
+                            const screenH = h * SCALE;
+                            graphics.drawRect(screenX, screenY, screenW, screenH);
+                        }
                     }
                 }
                 graphics.endFill();

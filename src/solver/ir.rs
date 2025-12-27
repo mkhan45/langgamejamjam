@@ -211,11 +211,18 @@ pub struct Clause {
 }
 
 #[derive(Debug, Clone)]
+pub struct DrawDirective {
+    pub condition: PropId,
+    pub draws: Vec<TermId>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Stage {
     pub name: String,
     pub rules: Vec<Clause>,
     pub state_constraints: Vec<PropId>,
     pub next_var_map: std::collections::HashMap<String, TermId>,
+    pub draw_directives: Vec<DrawDirective>,
 }
 
 #[derive(Debug, Clone, Default)]

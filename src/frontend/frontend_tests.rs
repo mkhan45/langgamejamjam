@@ -95,4 +95,147 @@ End Global
         frontend.query_stop();
         assert!(!frontend.has_more_solutions(), "No more after stop");
     }
+
+    #[test]
+    fn test_draw_directive_unconditional() {
+        let mut frontend = Frontend::new();
+        frontend
+            .load(
+                r#"Begin Facts:
+End Facts
+
+Begin Global:
+End Global
+
+Begin Stage Draw:
+    Draw
+        rect(1.0, 2.0, 3.0, 4.0)
+        rect(5.0, 6.0, 7.0, 8.0)
+End Stage Draw
+"#,
+            )
+            .unwrap();
+
+        let draws = frontend.collect_draws(0).unwrap();
+        assert_eq!(draws.len(), 2);
+        assert_eq!(draws[0].name, "rect");
+        assert_eq!(draws[0].args, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(draws[1].name, "rect");
+        assert_eq!(draws[1].args, vec![5.0, 6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    fn test_draw_directive_with_condition_true() {
+        let mut frontend = Frontend::new();
+        frontend
+            .load(
+                r#"Begin Facts:
+    StateVar Dead
+    Dead = no
+End Facts
+
+Begin Global:
+End Global
+
+Begin Stage Draw:
+    With
+        Dead = no
+    Draw
+        rect(1.0, 2.0, 3.0, 4.0)
+End Stage Draw
+"#,
+            )
+            .unwrap();
+
+        let draws = frontend.collect_draws(0).unwrap();
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].name, "rect");
+        assert_eq!(draws[0].args, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_draw_directive_with_condition_false() {
+        let mut frontend = Frontend::new();
+        frontend
+            .load(
+                r#"Begin Facts:
+    StateVar Dead
+    Dead = yes
+End Facts
+
+Begin Global:
+End Global
+
+Begin Stage Draw:
+    With
+        Dead = no
+    Draw
+        rect(1.0, 2.0, 3.0, 4.0)
+End Stage Draw
+"#,
+            )
+            .unwrap();
+
+        let draws = frontend.collect_draws(0).unwrap();
+        assert_eq!(draws.len(), 0);
+    }
+
+    #[test]
+    fn test_draw_directive_with_state_var_interpolation() {
+        let mut frontend = Frontend::new();
+        frontend
+            .load(
+                r#"Begin Facts:
+    StateVar PlayerY
+    PlayerY = 5.0
+End Facts
+
+Begin Global:
+End Global
+
+Begin Stage Draw:
+    Draw
+        rect(1.0, PlayerY, 1.0, 1.0)
+End Stage Draw
+"#,
+            )
+            .unwrap();
+
+        let draws = frontend.collect_draws(0).unwrap();
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].args, vec![1.0, 5.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_draw_directive_multiple_blocks() {
+        let mut frontend = Frontend::new();
+        frontend
+            .load(
+                r#"Begin Facts:
+    StateVar Dead
+    Dead = no
+End Facts
+
+Begin Global:
+End Global
+
+Begin Stage Draw:
+    With
+        Dead = no
+    Draw
+        rect(1.0, 0.0, 1.0, 1.0)
+
+    With
+        Dead = yes
+    Draw
+        rect(40.0, 40.0, 1.0, 1.0)
+End Stage Draw
+"#,
+            )
+            .unwrap();
+
+        let draws = frontend.collect_draws(0).unwrap();
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].args, vec![1.0, 0.0, 1.0, 1.0]);
+    }
 }

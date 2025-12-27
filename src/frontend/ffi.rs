@@ -307,3 +307,66 @@ pub unsafe extern "C" fn frontend_clear_facts_by_relation(frontend: *mut Fronten
         (*frontend).clear_facts_by_relation(relation_str);
     }
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_collect_draws(frontend: *mut Frontend, stage_index: i32) -> i32 {
+    unsafe {
+        match (*frontend).collect_draws(stage_index as usize) {
+            Ok(draws) => {
+                let count = draws.len() as i32;
+                (*frontend).draw_cache = draws;
+                count
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_collect_draws_by_name(frontend: *mut Frontend, name: *const c_char) -> i32 {
+    unsafe {
+        let name_str = CStr::from_ptr(name).to_str().unwrap_or("");
+        match (*frontend).collect_draws_by_name(name_str) {
+            Ok(draws) => {
+                let count = draws.len() as i32;
+                (*frontend).draw_cache = draws;
+                count
+            }
+            Err(_) => -1,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_draw_command_name(frontend: *mut Frontend, index: i32) -> *mut c_char {
+    unsafe {
+        if let Some(cmd) = (&(*frontend).draw_cache).get(index as usize) {
+            CString::new(cmd.name.clone()).unwrap().into_raw()
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_draw_command_arg_count(frontend: *mut Frontend, index: i32) -> i32 {
+    unsafe {
+        if let Some(cmd) = (&(*frontend).draw_cache).get(index as usize) {
+            cmd.args.len() as i32
+        } else {
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn frontend_draw_command_arg(frontend: *mut Frontend, index: i32, arg_index: i32) -> f32 {
+    unsafe {
+        if let Some(cmd) = (&(*frontend).draw_cache).get(index as usize) {
+            if let Some(&arg) = cmd.args.get(arg_index as usize) {
+                return arg;
+            }
+        }
+        0.0
+    }
+}

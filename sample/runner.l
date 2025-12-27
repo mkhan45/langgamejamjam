@@ -48,38 +48,18 @@ Begin Stage Physics:
 End Stage Physics
 
 Begin Stage Draw:
-    Rule DrawPlayer:
-    Dead = no
-    --------------
-    rect(1.0, RunnerY, 1.0, 1.0)
+    With
+        Dead = no
+    Draw
+        rect(1.0, RunnerY, 1.0, 1.0)
+        rect(ObstacleX, 0.0, 1.0, 1.0)
 
-    Rule DrawObstacle:
-    Dead = no
-    --------------
-    rect(ObstacleX, 0.0, 1.0, 1.0)
-
-    Rule DrawLEye:
-    Dead = yes
-    -------------
-    rect(40.0, 40.0, 1.0, 1.0)
-
-    Rule DrawREye:
-    Dead = yes
-    -------------
-    rect(60.0, 40.0, 1.0, 1.0)
-    
-    Rule DrawFrown:
-    Dead = yes
-    -------------
-    rect(46.0, 25.0, 9.0, 1.0)
-
-    Rule DrawFrownL:
-    Dead = yes
-    -------------
-    rect(45.0, 23.0, 1.0, 2.0)
-
-    Rule DrawFrownR:
-    Dead = yes
-    -------------
-    rect(55.0, 23.0, 1.0, 2.0)
+    With
+        Dead = yes
+    Draw
+        rect(40.0, 40.0, 1.0, 1.0)
+        rect(60.0, 40.0, 1.0, 1.0)
+        rect(46.0, 25.0, 9.0, 1.0)
+        rect(45.0, 23.0, 1.0, 2.0)
+        rect(55.0, 23.0, 1.0, 2.0)
 End Stage Draw

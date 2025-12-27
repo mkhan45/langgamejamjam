@@ -11,7 +11,7 @@ use nom::{
     sequence::delimited,
 };
 
-use crate::ast::{Module, Rule, Stage, Term, TermContents, Rel};
+use crate::ast::{DrawDirective, Module, Rule, Stage, Term, TermContents, Rel};
 
 fn user_rel(name: &str) -> Rel {
     Rel::UserRel { name: name.to_string() }
@@ -65,6 +65,45 @@ fn parse_state_constraints(s: Span) -> IResult<Span, Vec<Term>> {
     Ok((s, constraints))
 }
 
+fn is_draw_terminator(s: Span) -> bool {
+    let fragment = s.fragment();
+    fragment.starts_with("With")
+        || fragment.starts_with("Draw")
+        || fragment.starts_with("Rule")
+        || fragment.starts_with("Begin")
+        || fragment.starts_with("End")
+}
+
+fn parse_with_clause(s: Span) -> IResult<Span, Term> {
+    let (s, _) = tag("With")(s)?;
+    let (s, _) = line_ending(s)?;
+    let (s, _) = multispace0(s)?;
+    let (s, term) = parse_term(s)?;
+    let (s, _) = line_ending(s)?;
+    let (s, _) = multispace0(s)?;
+    Ok((s, term))
+}
+
+fn parse_draw_item(s: Span) -> IResult<Span, Term> {
+    let (s, _) = multispace0(s)?;
+    if is_draw_terminator(s) {
+        return Err(nom::Err::Error(nom::error::Error::new(s, nom::error::ErrorKind::Tag)));
+    }
+    let (s, term) = parse_term(s)?;
+    let (s, _) = line_ending(s)?;
+    Ok((s, term))
+}
+
+fn parse_draw_directive(s: Span) -> IResult<Span, DrawDirective> {
+    let (s, _) = multispace0(s)?;
+    let (s, condition) = opt(parse_with_clause).parse(s)?;
+    let (s, _) = tag("Draw")(s)?;
+    let (s, _) = line_ending(s)?;
+    let (s, draws) = many0(parse_draw_item).parse(s)?;
+
+    Ok((s, DrawDirective { condition, draws }))
+}
+
 pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
     let (s, _) = position(s)?;
 
@@ -88,6 +127,9 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
     let state_constraints = state_constraints.unwrap_or_default();
 
     let (s, _) = multispace0(s)?;
+    let (s, draw_directives) = many0(parse_draw_directive).parse(s)?;
+
+    let (s, _) = multispace0(s)?;
     let (s, _) = tag("End Stage")(s)?;
     let (s, _) = multispace1(s)?;
 
@@ -104,6 +146,7 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
         name: name.to_string(),
         rules,
         state_constraints,
+        draw_directives,
     }))
 }
 
@@ -179,6 +222,7 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
         name: "Global".to_string(),
         rules: global_rules,
         state_constraints: Vec::new(),
+        draw_directives: Vec::new(),
     };
 
     let (s, stages) = many0(|s| {

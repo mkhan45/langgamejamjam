@@ -5,11 +5,17 @@ use std::collections::HashMap;
 
 use nom::Finish;
 
-use crate::solver::ir::{Program, PropId, Prop, TermId};
+use crate::solver::ir::{Program, PropId, Prop, Term, TermId};
 use crate::solver::{format_solution, Solver, SearchStrategy, SearchQueue, Subst, reify_term, TerminationReason};
 
 use crate::ast::parser;
 use crate::ast::compile::Compiler;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawCommand {
+    pub name: String,
+    pub args: Vec<f32>,
+}
 
 pub struct Frontend {
     pub program: Program,
@@ -20,6 +26,7 @@ pub struct Frontend {
     pending_query_vars: Vec<(String, TermId)>,
     pub last_query_reason: Option<TerminationReason>,
     active_stage: Option<usize>,
+    pub draw_cache: Vec<DrawCommand>,
 }
 
 impl Default for Frontend {
@@ -33,6 +40,7 @@ impl Default for Frontend {
             pending_query_vars: Vec::new(),
             last_query_reason: None,
             active_stage: None,
+            draw_cache: Vec::new(),
         }
     }
 }
@@ -479,5 +487,85 @@ impl Frontend {
             }
             true
         });
+    }
+
+    pub fn collect_draws(&mut self, stage_index: usize) -> Result<Vec<DrawCommand>, String> {
+        if stage_index >= self.program.stages.len() {
+            return Err(format!("Stage index {} out of bounds", stage_index));
+        }
+
+        let directives = self.program.stages[stage_index].draw_directives.clone();
+        let mut results = Vec::new();
+
+        self.push_stage_rules(stage_index);
+
+        for directive in &directives {
+            let solution_set = {
+                let mut solver = Solver::new(&mut self.program);
+                solver.collect_solutions(directive.condition, self.strategy, 1000, self.max_steps)
+            };
+
+            for solution in solution_set.solutions() {
+                for &draw_term in &directive.draws {
+                    if let Some(cmd) = self.term_to_draw_command(draw_term, &solution.subst) {
+                        results.push(cmd);
+                    }
+                }
+            }
+        }
+
+        self.pop_stage_rules();
+        Ok(results)
+    }
+
+    pub fn collect_draws_by_name(&mut self, name: &str) -> Result<Vec<DrawCommand>, String> {
+        let stage_index = self
+            .program
+            .stages
+            .iter()
+            .position(|s| s.name == name)
+            .ok_or_else(|| format!("Stage '{}' not found", name))?;
+        self.collect_draws(stage_index)
+    }
+
+    fn term_to_draw_command(&self, term_id: TermId, subst: &Subst) -> Option<DrawCommand> {
+        let walked = subst.walk(term_id, &self.program.terms);
+        let term = self.program.terms.get(walked);
+
+        if let Term::App { sym, args } = term {
+            let name = self.program.symbols.get(*sym).clone();
+            let float_args: Option<Vec<f32>> = args
+                .iter()
+                .map(|&arg_id| {
+                    let walked_arg = subst.walk(arg_id, &self.program.terms);
+                    self.extract_float(walked_arg)
+                })
+                .collect();
+
+            float_args.map(|args| DrawCommand { name, args })
+        } else {
+            None
+        }
+    }
+
+    fn extract_float(&self, term_id: TermId) -> Option<f32> {
+        let term = self.program.terms.get(term_id);
+        match term {
+            Term::Float(f) => Some(*f),
+            Term::Int(i) => Some(*i as f32),
+            _ => None,
+        }
+    }
+
+    /// Find what state conditions would produce a specific draw command.
+    /// Returns the With conditions (with variable bindings) that would emit the target.
+    pub fn query_draw_condition(
+        &mut self,
+        _stage_index: usize,
+        _target_draw: &str,
+    ) -> Result<Vec<String>, String> {
+        // Scan draw directives, unify target with each draw term,
+        // return the conditions that would produce it
+        todo!()
     }
 }

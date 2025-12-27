@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::ast::{Module, Rel, Rule, Stage, Term, TermContents};
 use crate::ast::parser::{self, Span};
 use crate::solver::ir::{
-    Clause, Program, Prop, PropId, RelId, RelInfo, RelKind, Stage as IrStage, SymbolId,
-    Term as IRTerm, TermId, Var,
+    Clause, DrawDirective as IrDrawDirective, Program, Prop, PropId, RelId, RelInfo, RelKind,
+    Stage as IrStage, SymbolId, Term as IRTerm, TermId, Var,
 };
 use nom::Finish;
 use nom::Parser;
@@ -362,23 +362,51 @@ impl<'a> Compiler<'a> {
             .collect()
     }
 
+    fn lower_draw_directive(
+        &mut self,
+        directive: &crate::ast::DrawDirective,
+        fact_var_map: &HashMap<String, TermId>,
+    ) -> IrDrawDirective {
+        self.var_map = fact_var_map.clone();
+
+        let condition = match &directive.condition {
+            Some(term) => self.lower_term_to_prop(term),
+            None => self.alloc_prop(Prop::True),
+        };
+
+        let draws = directive
+            .draws
+            .iter()
+            .map(|t| self.lower_term_arg(t))
+            .collect();
+
+        IrDrawDirective { condition, draws }
+    }
+
     fn lower_stage(&mut self, stage: &Stage, fact_var_map: &HashMap<String, TermId>) -> IrStage {
         let rules = stage.rules.iter().flat_map(|r| self.lower_rule(r, fact_var_map)).collect();
-        
+
         self.var_map = fact_var_map.clone();
         self.next_var_map.clear();
         let state_constraints = stage.state_constraints
             .iter()
             .map(|t| self.lower_term_to_prop(t))
             .collect();
-        
+
         let next_var_map = self.next_var_map.clone();
-        
+
+        let draw_directives = stage
+            .draw_directives
+            .iter()
+            .map(|d| self.lower_draw_directive(d, fact_var_map))
+            .collect();
+
         IrStage {
             name: stage.name.clone(),
             rules,
             state_constraints,
             next_var_map,
+            draw_directives,
         }
     }
 

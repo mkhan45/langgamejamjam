@@ -26,8 +26,13 @@ Begin Stage <Name>:
     Begin State Constraints:   # Optional: define state transitions
         <term>*
     End State Constraints
+    <draw_directive>*          # Optional: draw directives
 End Stage <Name>
 ```
+
+### Comments
+- **Line comments**: Start with `#` and continue to end of line
+- **Placement**: Can be used anywhere whitespace is allowed
 
 ### Terms
 - **Variables**: Uppercase identifiers (`X`, `Health`, `Result`)
@@ -42,6 +47,44 @@ Rule <Name>:
     --------
     <conclusion>    # What follows if premise holds
 ```
+
+### Draw Directives
+Forward-evaluated drawing commands. Unlike rules (which use back-chaining), draw directives evaluate the condition and emit draw commands for each solution.
+
+```
+With
+    <condition>     # Query to evaluate
+Draw
+    <term>*         # Commands to emit for each solution
+
+Draw
+    <term>*         # Unconditional (no With clause)
+```
+
+**Example:**
+```
+Begin Stage Draw:
+    With
+        Dead = no
+    Draw
+        rect(1.0, PlayerY, 1.0, 1.0)
+        rect(ObstacleX, 0.0, 1.0, 1.0)
+
+    With
+        Dead = yes
+    Draw
+        rect(40.0, 40.0, 1.0, 1.0)
+        rect(60.0, 40.0, 1.0, 1.0)
+End Stage Draw
+```
+
+**Semantics:**
+1. For each `With/Draw` block, query the condition
+2. For each solution, substitute bindings into draw terms
+3. Collect all resulting draw commands
+4. Unconditional `Draw` blocks (no `With`) always emit their draws
+
+State variables in draw terms are interpolated with current values.
 
 ### Logical Connectives
 - `and(P, Q)` — conjunction
