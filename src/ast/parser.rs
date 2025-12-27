@@ -4,14 +4,63 @@ use nom_locate::{position, LocatedSpan};
 use nom::{
     AsChar,
     branch::alt,
-    bytes::complete::{tag, take_while, take_while1},
-    character::complete::{char, digit1, multispace0, multispace1, line_ending},
+    bytes::complete::{tag, take_while, take_while1, take_till},
+    character::complete::{char, digit1, multispace0, line_ending},
     combinator::{map, opt, recognize},
     multi::{many0, separated_list0},
     sequence::delimited,
 };
 
 use crate::ast::{DrawDirective, Module, Rule, Stage, Term, TermContents, Rel};
+
+/// Skips a line comment: # followed by everything until (but not including) newline or EOF
+fn skip_line_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = char('#')(s)?;
+    let (s, _) = take_till(|c| c == '\n' || c == '\r')(s)?;
+    Ok((s, ()))
+}
+
+/// Skips whitespace and comments (zero or more). 
+/// Replaces multispace0 but also handles # comments.
+fn ws0(s: Span) -> IResult<Span, ()> {
+    let mut s = s;
+    loop {
+        // Skip any whitespace first
+        let (s2, _) = multispace0(s)?;
+        s = s2;
+        
+        // Try to skip a comment
+        if let Ok((s3, _)) = skip_line_comment(s) {
+            s = s3;
+            // After comment, continue to skip more whitespace/comments
+        } else {
+            break;
+        }
+    }
+    Ok((s, ()))
+}
+
+/// Skips whitespace and comments, requiring at least one whitespace char or comment.
+/// Replaces multispace1.
+fn ws1(s: Span) -> IResult<Span, ()> {
+    // Must have at least one whitespace char OR a comment
+    let start = s;
+    let (s, _) = ws0(s)?;
+    
+    // Check we actually consumed something
+    if s.location_offset() == start.location_offset() {
+        return Err(nom::Err::Error(nom::error::Error::new(s, nom::error::ErrorKind::Space)));
+    }
+    Ok((s, ()))
+}
+
+/// Skips optional inline comment at end of line (before line_ending).
+/// Use this after parsing content that may have a trailing comment.
+fn skip_trailing_comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = take_while(|c| c == ' ' || c == '\t')(s)?;
+    let (s, _) = opt(skip_line_comment).parse(s)?;
+    Ok((s, ()))
+}
 
 fn user_rel(name: &str) -> Rel {
     Rel::UserRel { name: name.to_string() }
@@ -23,23 +72,25 @@ pub fn parse_rule(s: Span) -> IResult<Span, Rule> {
     let (s, _) = position(s)?;
 
     let (s, _) = tag("Rule")(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, _) = ws1(s)?;
 
     let (s, name) = parse_identifier(s)?;
 
     let (s, _) = char(':')(s)?;
     let (s, _) = line_ending(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, premise) = parse_term(s)?;
+    let (s, _) = skip_trailing_comment(s)?;
     let (s, _) = line_ending(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = take_while1(|c| c == '-')(s)?;
     let (s, _) = line_ending(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, conclusion) = parse_term(s)?;
+    let (s, _) = skip_trailing_comment(s)?;
 
     Ok((s, Rule {
         name: name.to_string(),
@@ -53,13 +104,14 @@ fn parse_state_constraints(s: Span) -> IResult<Span, Vec<Term>> {
     let (s, _) = line_ending(s)?;
 
     let (s, constraints) = many0(|s| {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, term) = parse_term(s)?;
+        let (s, _) = skip_trailing_comment(s)?;
         let (s, _) = line_ending(s)?;
         Ok((s, term))
     }).parse(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = tag("End State Constraints")(s)?;
 
     Ok((s, constraints))
@@ -77,25 +129,27 @@ fn is_draw_terminator(s: Span) -> bool {
 fn parse_with_clause(s: Span) -> IResult<Span, Term> {
     let (s, _) = tag("With")(s)?;
     let (s, _) = line_ending(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, term) = parse_term(s)?;
+    let (s, _) = skip_trailing_comment(s)?;
     let (s, _) = line_ending(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     Ok((s, term))
 }
 
 fn parse_draw_item(s: Span) -> IResult<Span, Term> {
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     if is_draw_terminator(s) {
         return Err(nom::Err::Error(nom::error::Error::new(s, nom::error::ErrorKind::Tag)));
     }
     let (s, term) = parse_term(s)?;
+    let (s, _) = skip_trailing_comment(s)?;
     let (s, _) = line_ending(s)?;
     Ok((s, term))
 }
 
 fn parse_draw_directive(s: Span) -> IResult<Span, DrawDirective> {
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, condition) = opt(parse_with_clause).parse(s)?;
     let (s, _) = tag("Draw")(s)?;
     let (s, _) = line_ending(s)?;
@@ -108,7 +162,7 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
     let (s, _) = position(s)?;
 
     let (s, _) = tag("Begin Stage")(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, _) = ws1(s)?;
 
     let (s, name) = parse_identifier(s)?;
 
@@ -116,22 +170,22 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
     let (s, _) = line_ending(s)?;
 
     let (s, rules) = many0(|s| {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, rule) = parse_rule(s)?;
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         Ok((s, rule))
     }).parse(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, state_constraints) = opt(parse_state_constraints).parse(s)?;
     let state_constraints = state_constraints.unwrap_or_default();
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, draw_directives) = many0(parse_draw_directive).parse(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = tag("End Stage")(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, _) = ws1(s)?;
 
     let (s, end_name) = parse_identifier(s)?;
 
@@ -152,7 +206,7 @@ pub fn parse_stage(s: Span) -> IResult<Span, Stage> {
 
 fn parse_state_var(s: Span) -> IResult<Span, String> {
     let (s, _) = tag("StateVar")(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, _) = ws1(s)?;
     let (s, name) = parse_identifier(s)?;
 
     if !name.chars().next().unwrap().is_uppercase() {
@@ -169,13 +223,13 @@ enum FactOrStateVar {
 
 pub fn parse_module(s: Span) -> IResult<Span, Module> {
     let (s, _) = position(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
 
     let (s, _) = tag("Begin Facts:")(s)?;
     let (s, _) = line_ending(s)?;
 
     let (s, items) = many0(|s| {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, item) = alt((
             |s| {
                 let (s, sv) = parse_state_var(s)?;
@@ -186,6 +240,7 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
                 Ok((s, FactOrStateVar::Fact(term)))
             },
         )).parse(s)?;
+        let (s, _) = skip_trailing_comment(s)?;
         let (s, _) = line_ending(s)?;
         Ok((s, item))
     }).parse(s)?;
@@ -199,24 +254,24 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
         }
     }
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = tag("End Facts")(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, _) = ws1(s)?;
 
     let (s, _) = tag("Begin Global:")(s)?;
     let (s, _) = line_ending(s)?;
 
     let (s, _) = position(s)?;
     let (s, global_rules) = many0(|s| {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, rule) = parse_rule(s)?;
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         Ok((s, rule))
     }).parse(s)?;
 
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = tag("End Global")(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
 
     let global_stage = Stage {
         name: "Global".to_string(),
@@ -226,9 +281,9 @@ pub fn parse_module(s: Span) -> IResult<Span, Module> {
     };
 
     let (s, stages) = many0(|s| {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, stage) = parse_stage(s)?;
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         Ok((s, stage))
     }).parse(s)?;
 
@@ -319,19 +374,19 @@ fn parse_atom(s: Span) -> IResult<Span, Term> {
 fn parse_app(s: Span) -> IResult<Span, Term> {
     let (s, _) = position(s)?;
     let (s, rel_name) = parse_identifier(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
 
     fn ws_term(s: Span) -> IResult<Span, Term> {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, term) = parse_term(s)?;
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         Ok((s, term))
     }
 
     fn ws_comma(s: Span) -> IResult<Span, char> {
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         let (s, c) = char(',')(s)?;
-        let (s, _) = multispace0(s)?;
+        let (s, _) = ws0(s)?;
         Ok((s, c))
     }
 
@@ -350,9 +405,9 @@ fn parse_app(s: Span) -> IResult<Span, Term> {
 
 fn parse_paren_term(s: Span) -> IResult<Span, Term> {
     let (s, _) = char('(')(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, term) = parse_term(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     let (s, _) = char(')')(s)?;
     Ok((s, term))
 }
@@ -370,7 +425,7 @@ fn parse_primary(s: Span) -> IResult<Span, Term> {
 
 fn parse_not_prefix(s: Span) -> IResult<Span, ()> {
     let (s, _) = alt((char('¬'), char('!'))).parse(s)?;
-    let (s, _) = multispace0(s)?;
+    let (s, _) = ws0(s)?;
     Ok((s, ()))
 }
 
@@ -417,9 +472,9 @@ fn parse_eq_op(s: Span) -> IResult<Span, Rel> {
 fn parse_eq(s: Span) -> IResult<Span, Term> {
     let (mut s, mut left) = parse_unary(s)?;
     loop {
-        let (s2, _) = multispace0(s)?;
+        let (s2, _) = ws0(s)?;
         if let Ok((s3, rel)) = parse_eq_op(s2) {
-            let (s4, _) = multispace0(s3)?;
+            let (s4, _) = ws0(s3)?;
             let (s5, right) = parse_unary(s4)?;
             left = Term {
                 contents: TermContents::App {
@@ -438,9 +493,9 @@ fn parse_eq(s: Span) -> IResult<Span, Term> {
 fn parse_cmp(s: Span) -> IResult<Span, Term> {
     let (mut s, mut left) = parse_eq(s)?;
     loop {
-        let (s2, _) = multispace0(s)?;
+        let (s2, _) = ws0(s)?;
         if let Ok((s3, rel)) = parse_cmp_op(s2) {
-            let (s4, _) = multispace0(s3)?;
+            let (s4, _) = ws0(s3)?;
             let (s5, right) = parse_eq(s4)?;
             left = Term {
                 contents: TermContents::App {
@@ -464,9 +519,9 @@ fn parse_and_op(s: Span) -> IResult<Span, Rel> {
 fn parse_and(s: Span) -> IResult<Span, Term> {
     let (mut s, mut left) = parse_cmp(s)?;
     loop {
-        let (s2, _) = multispace0(s)?;
+        let (s2, _) = ws0(s)?;
         if let Ok((s3, rel)) = parse_and_op(s2) {
-            let (s4, _) = multispace0(s3)?;
+            let (s4, _) = ws0(s3)?;
             let (s5, right) = parse_cmp(s4)?;
             left = Term {
                 contents: TermContents::App {
@@ -490,9 +545,9 @@ fn parse_or_op(s: Span) -> IResult<Span, Rel> {
 fn parse_or(s: Span) -> IResult<Span, Term> {
     let (mut s, mut left) = parse_and(s)?;
     loop {
-        let (s2, _) = multispace0(s)?;
+        let (s2, _) = ws0(s)?;
         if let Ok((s3, rel)) = parse_or_op(s2) {
-            let (s4, _) = multispace0(s3)?;
+            let (s4, _) = ws0(s3)?;
             let (s5, right) = parse_and(s4)?;
             left = Term {
                 contents: TermContents::App {
