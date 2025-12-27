@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use nom::Finish;
 
 use crate::solver::ir::{Program, PropId, Prop, Term, TermId};
-use crate::solver::{format_solution, Solver, SearchStrategy, SearchQueue, Subst, reify_term, TerminationReason};
+use crate::solver::{format_solution, Solver, SearchStrategy, SearchQueue, Subst, reify_term, TerminationReason, SolutionSet};
 
 use crate::ast::parser;
 use crate::ast::compile::Compiler;
@@ -15,6 +15,12 @@ use crate::ast::compile::Compiler;
 pub struct DrawCommand {
     pub name: String,
     pub args: Vec<f32>,
+}
+
+struct TransitionQuery {
+    goal: PropId,
+    next_var_map: HashMap<String, TermId>,
+    stage_name: String,
 }
 
 pub struct Frontend {
@@ -234,155 +240,18 @@ impl Frontend {
         if stage_index >= self.program.stages.len() {
             return Err(format!("Stage index {} out of bounds", stage_index));
         }
-
-        let stage = &self.program.stages[stage_index];
-        if stage.state_constraints.is_empty() {
+        if self.program.stages[stage_index].state_constraints.is_empty() {
             return Ok(());
         }
 
-        // State constraint solving always has access to:
-        // 1. Current facts (base knowledge, including current state variable values)
-        // 2. Global rules (from Begin Global section - available everywhere)
-        // 3. Stage-specific state constraints
-        // Global rules are accessible via back-chaining in the solver
-        let constraints = stage.state_constraints.clone();
-        let stage_name = stage.name.clone();
-        let next_var_map = stage.next_var_map.clone();
+        let query = self.build_transition_query(stage_index);
 
-        let resolved_state_values: Vec<(String, TermId)> = {
-            let true_prop = self.program.props.alloc(Prop::True);
+        let solution_set = {
             let mut solver = Solver::new(&mut self.program);
-            let solution_set = solver.collect_solutions(true_prop, self.strategy, 1, 1000);
-            
-            if let Some(solution) = solution_set.solutions().first() {
-                self.program.state_vars.clone().into_iter().filter_map(|name| {
-                    let term_id = self.var_map.get(&name)?;
-                    let resolved = solution.subst.walk(*term_id, &self.program.terms);
-                    Some((name, resolved))
-                }).collect()
-            } else {
-                Vec::new()
-            }
+            solver.collect_solutions(query.goal, self.strategy, 2, self.max_steps)
         };
 
-        let mut all_constraints = Vec::new();
-        for (name, resolved_val) in &resolved_state_values {
-            if let Some(&original_term) = self.program.state_var_term_ids.get(name) {
-                let eq_prop = self.program.props.alloc(Prop::Eq(original_term, *resolved_val));
-                all_constraints.push(eq_prop);
-            }
-        }
-        all_constraints.extend(constraints.iter().copied());
-        let combined_goal = self.conjoin_props(&all_constraints);
-
-        let mut solver = Solver::new(&mut self.program);
-        // Collect up to 2 solutions to verify state constraints are deterministic (exactly 1 solution)
-        let solution_set = solver.collect_solutions(combined_goal, self.strategy, 2, self.max_steps);
-        let solutions = solution_set.solutions();
-
-        if solutions.len() == 1 {
-            let solution = &solutions[0];
-            // Collect new values
-            let mut new_values = Vec::new();
-            for (name, next_term_id) in &next_var_map {
-                let new_value = solution.subst.walk(*next_term_id, &solver.program.terms);
-                new_values.push((name.clone(), new_value));
-            }
-            
-            // Update var_map with new values
-            for (name, new_value) in &new_values {
-                self.var_map.insert(name.clone(), *new_value);
-            }
-            
-            // Update facts to reflect new state variable values
-            // Find and update fact constraints for state variables
-            let mut updated_facts = Vec::new();
-            for &fact_prop_id in &self.program.facts {
-                let fact_prop = self.program.props.get(fact_prop_id).clone();
-                if let Prop::Eq(term_a, term_b) = fact_prop {
-                    // Check if this fact involves a state variable
-                    let mut is_state_var_fact = false;
-                    for (name, original_term_id) in &self.program.state_var_term_ids {
-                        if term_a == *original_term_id || term_b == *original_term_id {
-                            // This fact involves a state variable, check if we have a new value for it
-                            if let Some((_, new_value)) = new_values.iter().find(|(n, _)| n == name) {
-                                // Replace this fact with the new value
-                                let updated_fact = if term_a == *original_term_id {
-                                    self.program.props.alloc(Prop::Eq(*original_term_id, *new_value))
-                                } else {
-                                    self.program.props.alloc(Prop::Eq(term_b, *new_value))
-                                };
-                                updated_facts.push(updated_fact);
-                                is_state_var_fact = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !is_state_var_fact {
-                        updated_facts.push(fact_prop_id);
-                    }
-                } else {
-                    updated_facts.push(fact_prop_id);
-                }
-            }
-            self.program.facts = updated_facts;
-            
-            Ok(())
-        } else if solutions.is_empty() {
-            match solution_set.reason {
-                TerminationReason::SearchExhausted => {
-                    Err(format!(
-                        "State constraint failure in stage '{}': no solutions found",
-                        stage_name
-                    ))
-                }
-                TerminationReason::MaxStepsReached => {
-                    Err(format!(
-                        "State constraint search hit step limit in stage '{}': inconclusive result",
-                        stage_name
-                    ))
-                }
-                TerminationReason::LimitReached => {
-                    unreachable!("LimitReached with 0 solutions")
-                }
-            }
-        } else {
-            // solutions.len() >= 2
-            match solution_set.reason {
-                TerminationReason::LimitReached => {
-                    let mut diff_vars = Vec::new();
-                    for (name, next_term_id) in &next_var_map {
-                        let val1 = reify_term(
-                            solutions[0].subst.walk(*next_term_id, &solver.program.terms),
-                            &solutions[0].subst,
-                            solver.program,
-                        );
-                        let val2 = reify_term(
-                            solutions[1].subst.walk(*next_term_id, &solver.program.terms),
-                            &solutions[1].subst,
-                            solver.program,
-                        );
-                        if val1 != val2 {
-                            diff_vars.push(format!("{}: {} vs {}", name, val1, val2));
-                        }
-                    }
-                    Err(format!(
-                        "Ambiguous state update in stage '{}': multiple solutions found. Differing state vars: [{}]",
-                        stage_name,
-                        diff_vars.join(", ")
-                    ))
-                }
-                TerminationReason::MaxStepsReached => {
-                    Err(format!(
-                        "State constraint search hit step limit in stage '{}': non-determinism check inconclusive",
-                        stage_name
-                    ))
-                }
-                TerminationReason::SearchExhausted => {
-                    unreachable!("SearchExhausted with 2+ solutions")
-                }
-            }
-        }
+        self.process_transition_result(solution_set, query.next_var_map, query.stage_name)
     }
 
     pub fn run_stage_by_name(&mut self, name: &str) -> Result<(), String> {
@@ -463,6 +332,175 @@ impl Frontend {
             }
             result
         }
+    }
+
+    fn build_transition_query(&mut self, stage_index: usize) -> TransitionQuery {
+        let stage = &self.program.stages[stage_index];
+        let constraints = stage.state_constraints.clone();
+        let stage_name = stage.name.clone();
+        let next_var_map = stage.next_var_map.clone();
+
+        let resolved_state_values: Vec<(String, TermId)> = {
+            let true_prop = self.program.props.alloc(Prop::True);
+            let mut solver = Solver::new(&mut self.program);
+            let solution_set = solver.collect_solutions(true_prop, self.strategy, 1, 1000);
+
+            if let Some(solution) = solution_set.solutions().first() {
+                self.program
+                    .state_vars
+                    .clone()
+                    .into_iter()
+                    .filter_map(|name| {
+                        let term_id = self.var_map.get(&name)?;
+                        let resolved = solution.subst.walk(*term_id, &self.program.terms);
+                        Some((name, resolved))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        let mut all_constraints = Vec::new();
+        for (name, resolved_val) in &resolved_state_values {
+            if let Some(&original_term) = self.program.state_var_term_ids.get(name) {
+                let eq_prop = self.program.props.alloc(Prop::Eq(original_term, *resolved_val));
+                all_constraints.push(eq_prop);
+            }
+        }
+        all_constraints.extend(constraints.iter().copied());
+        let goal = self.conjoin_props(&all_constraints);
+
+        TransitionQuery {
+            goal,
+            next_var_map,
+            stage_name,
+        }
+    }
+
+    fn process_transition_result(
+        &mut self,
+        solution_set: SolutionSet,
+        next_var_map: HashMap<String, TermId>,
+        stage_name: String,
+    ) -> Result<(), String> {
+        let solutions = solution_set.solutions();
+
+        if solutions.len() == 1 {
+            let solution = &solutions[0];
+
+            let new_values: Vec<(String, TermId)> = next_var_map
+                .iter()
+                .map(|(name, next_term_id)| {
+                    let new_value = solution.subst.walk(*next_term_id, &self.program.terms);
+                    (name.clone(), new_value)
+                })
+                .collect();
+
+            for (name, new_value) in &new_values {
+                self.var_map.insert(name.clone(), *new_value);
+            }
+
+            self.update_state_facts(&new_values);
+            Ok(())
+        } else if solutions.is_empty() {
+            match solution_set.reason {
+                TerminationReason::SearchExhausted => Err(format!(
+                    "State constraint failure in stage '{}': no solutions found",
+                    stage_name
+                )),
+                TerminationReason::MaxStepsReached => Err(format!(
+                    "State constraint search hit step limit in stage '{}': inconclusive result",
+                    stage_name
+                )),
+                TerminationReason::LimitReached => {
+                    unreachable!("LimitReached with 0 solutions")
+                }
+            }
+        } else {
+            // solutions.len() >= 2
+            match solution_set.reason {
+                TerminationReason::LimitReached => {
+                    let diff_vars: Vec<String> = next_var_map
+                        .iter()
+                        .filter_map(|(name, next_term_id)| {
+                            let val1 = reify_term(
+                                solutions[0].subst.walk(*next_term_id, &self.program.terms),
+                                &solutions[0].subst,
+                                &self.program,
+                            );
+                            let val2 = reify_term(
+                                solutions[1].subst.walk(*next_term_id, &self.program.terms),
+                                &solutions[1].subst,
+                                &self.program,
+                            );
+                            if val1 != val2 {
+                                Some(format!("{}: {} vs {}", name, val1, val2))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    Err(format!(
+                        "Ambiguous state update in stage '{}': multiple solutions found. Differing state vars: [{}]",
+                        stage_name,
+                        diff_vars.join(", ")
+                    ))
+                }
+                TerminationReason::MaxStepsReached => Err(format!(
+                    "State constraint search hit step limit in stage '{}': non-determinism check inconclusive",
+                    stage_name
+                )),
+                TerminationReason::SearchExhausted => {
+                    unreachable!("SearchExhausted with 2+ solutions")
+                }
+            }
+        }
+    }
+
+    fn update_state_facts(&mut self, new_values: &[(String, TermId)]) {
+        let mut updated_facts = Vec::new();
+
+        let fact_ids: Vec<_> = self.program.facts.iter().copied().collect();
+        
+        for fact_prop_id in fact_ids {
+            let fact_prop = self.program.props.get(fact_prop_id).clone();
+
+            if let Prop::Eq(term_a, term_b) = fact_prop {
+                let replacement = self.find_state_var_replacement(term_a, term_b, new_values);
+                if let Some(new_fact) = replacement {
+                    updated_facts.push(new_fact);
+                } else {
+                    updated_facts.push(fact_prop_id);
+                }
+            } else {
+                updated_facts.push(fact_prop_id);
+            }
+        }
+
+        self.program.facts = updated_facts;
+    }
+
+    fn find_state_var_replacement(
+        &mut self,
+        term_a: TermId,
+        term_b: TermId,
+        new_values: &[(String, TermId)],
+    ) -> Option<PropId> {
+        for (name, original_term_id) in &self.program.state_var_term_ids.clone() {
+            if term_a == *original_term_id || term_b == *original_term_id {
+                if let Some((_, new_value)) = new_values.iter().find(|(n, _)| n == name) {
+                    let new_fact = if term_a == *original_term_id {
+                        self.program.props.alloc(Prop::Eq(*original_term_id, *new_value))
+                    } else {
+                        self.program.props.alloc(Prop::Eq(term_b, *new_value))
+                    };
+                    return Some(new_fact);
+                }
+            }
+        }
+        None
     }
 
     pub fn add_fact(&mut self, fact_str: &str) -> Result<(), String> {

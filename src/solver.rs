@@ -6,6 +6,5 @@ pub use engine::{
     Solver, State, Subst, SolutionSet, TerminationReason,
 };
 
-#[path = "../solver/state_tests.rs"]
 #[cfg(test)]
 mod state_tests;

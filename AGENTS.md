@@ -381,6 +381,7 @@ enum TerminationReason {
 - `run_stage(index)` / `run_stage_by_name(name)` → `Result<(), String>` — execute state transitions
 - `get_state_var(name)` → `Option<String>` — get current state value
 - `state_vars()` → `Vec<(String, String)>` — get all state variables
+- `collect_draws(stage_index)` / `collect_draws_by_name(name)` → `Result<Vec<DrawCommand>, String>` — evaluate draw directives
 
 **Solution Collection:**
 `collect_solutions(goal, strategy, limit, max_steps) → SolutionSet` collects up to `limit` solutions. The `reason` field distinguishes between:
