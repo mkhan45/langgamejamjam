@@ -215,6 +215,24 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn extract_conclusions(term: &Term) -> Vec<&Term> {
+        match &term.contents {
+            TermContents::App { rel, args } => {
+                let rel_name = match rel {
+                    Rel::SMTRel { name } | Rel::UserRel { name } => name.as_str(),
+                };
+                if rel_name == "each" {
+                    args.iter()
+                        .flat_map(|arg| Self::extract_conclusions(arg))
+                        .collect()
+                } else {
+                    vec![term]
+                }
+            }
+            _ => vec![term],
+        }
+    }
+
     fn lower_term_to_prop(&mut self, term: &Term) -> PropId {
         match &term.contents {
             TermContents::App { rel, args } => {
@@ -290,17 +308,8 @@ impl<'a> Compiler<'a> {
         self.lower_term_to_prop(term)
     }
 
-    fn lower_rule(&mut self, rule: &Rule, fact_var_map: &HashMap<String, TermId>) -> Clause {
-        self.clear_scope();
-        
-        // Restore fact variables so rules can reference state variables from facts
-        for (name, term_id) in fact_var_map {
-            self.var_map.insert(name.clone(), *term_id);
-        }
-
-        let premise_body = self.lower_term_to_prop(&rule.premise);
-
-        let (head_rel, head_args) = match &rule.conclusion.contents {
+    fn lower_conclusion(&mut self, conclusion: &Term) -> (RelId, Vec<TermId>) {
+        match &conclusion.contents {
             TermContents::App { rel, args } => {
                 let rel_name = match rel {
                     Rel::SMTRel { name } | Rel::UserRel { name } => name.as_str(),
@@ -317,21 +326,44 @@ impl<'a> Compiler<'a> {
                 (rel_id, lowered_args)
             }
             _ => {
-                let dummy_rel = self.get_or_create_rel("_true", 0, RelKind::User);
-                (dummy_rel, Vec::new())
+                panic!("Non-rel-app in conclusion")
             }
-        };
-
-        Clause {
-            name: rule.name.clone(),
-            head_rel,
-            head_args,
-            body: premise_body,
         }
     }
 
+    fn lower_rule(&mut self, rule: &Rule, fact_var_map: &HashMap<String, TermId>) -> Vec<Clause> {
+        self.clear_scope();
+
+        // Restore fact variables so rules can reference state variables from facts
+        for (name, term_id) in fact_var_map {
+            self.var_map.insert(name.clone(), *term_id);
+        }
+
+        let premise_body = self.lower_term_to_prop(&rule.premise);
+        let conclusions = Self::extract_conclusions(&rule.conclusion);
+
+        conclusions
+            .into_iter()
+            .enumerate()
+            .map(|(i, conclusion)| {
+                let (head_rel, head_args) = self.lower_conclusion(conclusion);
+                let name = if i > 0 {
+                    format!("{}${}", rule.name, i)
+                } else {
+                    rule.name.clone()
+                };
+                Clause {
+                    name,
+                    head_rel,
+                    head_args,
+                    body: premise_body,
+                }
+            })
+            .collect()
+    }
+
     fn lower_stage(&mut self, stage: &Stage, fact_var_map: &HashMap<String, TermId>) -> IrStage {
-        let rules = stage.rules.iter().map(|r| self.lower_rule(r, fact_var_map)).collect();
+        let rules = stage.rules.iter().flat_map(|r| self.lower_rule(r, fact_var_map)).collect();
         
         self.var_map = fact_var_map.clone();
         self.next_var_map.clear();
@@ -375,13 +407,13 @@ impl<'a> Compiler<'a> {
         }
 
         for rule in &module.global_stage.rules {
-            let clause = self.lower_rule(rule, &fact_var_map);
-            self.program.global_rules.push(clause);
+            let clauses = self.lower_rule(rule, &fact_var_map);
+            self.program.global_rules.extend(clauses);
         }
 
         for rule in parse_stdlib_rules() {
-            let clause = self.lower_rule(&rule, &fact_var_map);
-            self.program.global_rules.push(clause);
+            let clauses = self.lower_rule(&rule, &fact_var_map);
+            self.program.global_rules.extend(clauses);
         }
 
         for stage in &module.stages {
@@ -495,5 +527,45 @@ End Stage Movement
         assert_eq!(program.stages.len(), 1);
         assert_eq!(program.stages[0].name, "Movement");
         assert_eq!(program.stages[0].rules.len(), 1);
+    }
+
+    #[test]
+    fn test_each_expands_to_multiple_clauses() {
+        let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+Rule Draw:
+    alive()
+    -------
+    each(rect(1, 2), rect(3, 4))
+End Global
+"#;
+        let program = parse_and_compile(input);
+        let clauses: Vec<_> = program.global_rules.iter()
+            .filter(|c| c.name == "Draw" || c.name.starts_with("Draw$"))
+            .collect();
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(program.rels.get(clauses[0].head_rel).name, "rect");
+        assert_eq!(program.rels.get(clauses[1].head_rel).name, "rect");
+    }
+
+    #[test]
+    fn test_each_nested_flattens() {
+        let input = r#"Begin Facts:
+End Facts
+
+Begin Global:
+Rule Multi:
+    premise()
+    ---------
+    each(each(a(), b()), c())
+End Global
+"#;
+        let program = parse_and_compile(input);
+        let clauses: Vec<_> = program.global_rules.iter()
+            .filter(|c| c.name == "Multi" || c.name.starts_with("Multi$"))
+            .collect();
+        assert_eq!(clauses.len(), 3);
     }
 }
